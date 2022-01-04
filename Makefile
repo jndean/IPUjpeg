@@ -21,4 +21,4 @@ main.o: main.cpp
 	g++ $(CFLAGS) -c $< -o $@
 
 clean:
-	rm *.o ${TARGET} outfile.ppm
+	rm *.o ${TARGET} outfile.ppm outfile.pgm
