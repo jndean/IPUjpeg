@@ -3,7 +3,7 @@
 
 int main()
 {
-    JPGReader reader("imgs/small420.jpg");
+    JPGReader reader("imgs/small_restart.jpg");
     reader.decode();
 
     reader.write(reader.isGreyScale() ? "outfile.pgm" : "outfile.ppm");

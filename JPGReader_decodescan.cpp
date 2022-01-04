@@ -1,80 +1,86 @@
 #include <stdio.h>
-#include<string.h>
+#include <string.h>
+#include <stdexcept>
 
 #include "JPGReader.hpp"
 
 void JPGReader::decodeScanCPU()
 {
-    unsigned char *pos = m_pos;
-    unsigned int header_len = read16(pos);
-    if (pos + header_len >= m_end)
-        THROW(SYNTAX_ERROR);
-    pos += 2;
+  unsigned char *pos = m_pos;
+  unsigned int header_len = read16(pos);
+  if (pos + header_len >= m_end)
+    THROW(SYNTAX_ERROR);
+  pos += 2;
 
-    if (header_len < (4 + 2 * m_num_channels))
-        THROW(SYNTAX_ERROR);
-    if (*(pos++) != m_num_channels)
-        THROW(UNSUPPORTED_ERROR);
-    int i;
-    ColourChannel *channel;
-    for (i = 0, channel = m_channels; i < m_num_channels; i++, channel++, pos += 2)
+  if (header_len < (4 + 2 * m_num_channels))
+    THROW(SYNTAX_ERROR);
+  if (*(pos++) != m_num_channels)
+    THROW(UNSUPPORTED_ERROR);
+  int i;
+  ColourChannel *channel;
+  for (i = 0, channel = m_channels; i < m_num_channels; i++, channel++, pos += 2)
+  {
+    if (pos[0] != channel->id)
+      THROW(SYNTAX_ERROR);
+    if (pos[1] & 0xEE)
+      THROW(SYNTAX_ERROR);
+    channel->dc_id = pos[1] >> 4;
+    channel->ac_id = (pos[1] & 1) | 2;
+  }
+  if (pos[0] || (pos[1] != 63) || pos[2])
+    THROW(UNSUPPORTED_ERROR);
+  pos = m_pos = m_pos + header_len;
+
+  int restart_interval = m_restart_interval;
+  int restart_count = restart_interval;
+  int next_restart_index = 0;
+
+  // Loop over all blocks
+  for (int block_y = 0; block_y < m_num_blocks_y; block_y++)
+  {
+    for (int block_x = 0; block_x < m_num_blocks_x; block_x++)
     {
-        if (pos[0] != channel->id)
-            THROW(SYNTAX_ERROR);
-        if (pos[1] & 0xEE)
-            THROW(SYNTAX_ERROR);
-        channel->dc_id = pos[1] >> 4;
-        channel->ac_id = (pos[1] & 1) | 2;
-    }
-    if (pos[0] || (pos[1] != 63) || pos[2])
-        THROW(UNSUPPORTED_ERROR);
-    pos = m_pos = m_pos + header_len;
 
-    int restart_interval = m_restart_interval;
-    int restart_count = restart_interval;
-    int next_restart_index = 0;
+      // Loop over all channels //
+      for (i = 0, channel = m_channels; i < m_num_channels; i++, channel++)
+      {
 
-    // Loop over all blocks
-    for (int block_y = 0; block_y < m_num_blocks_y; block_y++)
-    {
-        for (int block_x = 0; block_x < m_num_blocks_x; block_x++)
+        // Loop over samples in block //
+        for (int sample_y = 0; sample_y < channel->samples_y; ++sample_y)
         {
+          for (int sample_x = 0; sample_x < channel->samples_x; ++sample_x)
+          {
 
-            // Loop over all channels //
-            for (i = 0, channel = m_channels; i < m_num_channels; i++, channel++)
-            {
-
-                // Loop over samples in block //
-                for (int sample_y = 0; sample_y < channel->samples_y; ++sample_y)
-                {
-                    for (int sample_x = 0; sample_x < channel->samples_x; ++sample_x)
-                    {
-
-                        int out_pos = ((block_y * channel->samples_y + sample_y) * channel->stride + block_x * channel->samples_x + sample_x) << 3;
-                        decodeBlock(channel, &channel->pixels[out_pos]);    
-                        if (m_error)
-                            return;
-                    }
-                }
-            }
-
-            if (restart_interval && !(--restart_count))
-            {
-                printf("Doing a restart\n");
-                // Byte align //
-                m_num_bufbits &= 0xF8;
-                i = getBits(16);
-                if (((i & 0xFFF8) != 0xFFD0) || ((i & 7) != next_restart_index))
-                    THROW(SYNTAX_ERROR);
-                next_restart_index = (next_restart_index + 1) & 7;
-                restart_count = restart_interval;
-                for (i = 0; i < 3; i++)
-                    m_channels[i].dc_cumulative_val = 0;
-            }
+            int out_pos = ((block_y * channel->samples_y + sample_y) * channel->stride + block_x * channel->samples_x + sample_x) << 3;
+            decodeBlock(channel, &channel->pixels[out_pos]);
+            if (m_error)
+              return;
+          }
         }
-    }
-}
+      }
 
+      if (restart_interval && !(--restart_count))
+      {
+        // Byte align //
+        m_num_bufbits &= 0xF8;
+        int marker_bits = getBits(16);
+        if (marker_bits & 0xFF00 != 0xFF00) {
+          THROW(SYNTAX_ERROR);
+        }
+        // jpg encoders don't seem to respect this rule, so we ignore it //
+        /*
+        if (((i & 0xFFF8) != 0xFFD0) || ((i & 7) != next_restart_index)){
+          THROW(SYNTAX_ERROR);
+        }
+        next_restart_index = (next_restart_index + 1) & 7;
+        */
+        restart_count = restart_interval;
+        for (i = 0; i < 3; i++)
+          m_channels[i].dc_cumulative_val = 0;
+      }
+    }
+  }
+}
 
 void JPGReader::decodeBlock(ColourChannel *channel, unsigned char *out)
 {
@@ -107,7 +113,6 @@ void JPGReader::decodeBlock(ColourChannel *channel, unsigned char *out)
     iDCT_col(&block[coef], &out[coef], channel->stride);
 }
 
-
 int JPGReader::getVLC(DhtVlc *vlc_table, unsigned char *code)
 {
   int symbol = showBits(16);
@@ -128,7 +133,6 @@ int JPGReader::getVLC(DhtVlc *vlc_table, unsigned char *code)
     value += ((-1) << num_bits) + 1;
   return value;
 }
-
 
 // This only shows the bits, but doesn't move past them //
 int JPGReader::showBits(int num_bits)
@@ -180,7 +184,6 @@ FAILURE:
   m_error = SYNTAX_ERROR;
   return 0;
 }
-
 
 // Show the bits AND move past them //
 int JPGReader::getBits(int num_bits)
