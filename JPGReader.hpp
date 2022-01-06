@@ -2,6 +2,8 @@
 
 #include <vector>
 
+#include <poplar/Graph.hpp>
+
 #define NO_ERROR 0
 #define SYNTAX_ERROR 1
 #define UNSUPPORTED_ERROR 2
@@ -30,6 +32,7 @@ typedef struct _ColourChannel
 class JPGReader
 {
 private:
+    bool m_ready_to_decode;
     unsigned char *m_buf, *m_pos, *m_end;
     unsigned int m_size;
     unsigned short m_width, m_height;
@@ -45,6 +48,8 @@ private:
     unsigned int m_bufbits;
     unsigned char m_num_bufbits;
     int m_block_space[64];
+
+    poplar::Graph m_ipuGraph;
 
     unsigned short read16(const unsigned char *pos);
 
@@ -66,12 +71,25 @@ private:
     void iDCT_col(const int* D, unsigned char *out, int stride);
 
 public:
-    JPGReader(const char* filename);
+
+    static const int TILES_Y = 22;
+    static const int TILES_X = 22;
+    static const int PIXELS_PER_TILE_Y = 64;
+    static const int PIXELS_PER_TILE_X = 64;
+    static const int MAX_PIXELS_Y = TILES_Y * PIXELS_PER_TILE_Y;
+    static const int MAX_PIXELS_X = TILES_X * PIXELS_PER_TILE_X;
+
+    JPGReader(poplar::Target& ipuTarget);
     ~JPGReader();
 
+    void read(const char* filename);
     int decode();
-    void write(const char* filename);
+    void write(const char* filename);    
+    void flush();
+
+
     bool isGreyScale();
+    bool readyToDecode();
 
 };
 
