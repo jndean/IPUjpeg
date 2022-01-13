@@ -32,6 +32,7 @@ typedef struct _ColourChannel {
   int dc_cumulative_val;
   std::vector<unsigned char> pixels;
   std::string tensor_name;
+
   poplar::Tensor ipu_pixels;
   std::vector<poplar::Tensor> ipu_pixel_patches;
   std::string stream_name;
@@ -52,8 +53,6 @@ class JPGReader {
   bool isGreyScale();
   bool readyToDecode();
 
-  // static const ulong TILES_Y = _TILES_Y;
-  // static const ulong TILES_X = _TILES_X;
   static const ulong MAX_PIXELS_PER_TILE_Y = 64;
   static const ulong MAX_PIXELS_PER_TILE_X = 64;
   static const ulong MAX_PIXELS_PER_TILE = MAX_PIXELS_PER_TILE_X * MAX_PIXELS_PER_TILE_Y;

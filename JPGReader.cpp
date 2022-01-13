@@ -26,71 +26,61 @@ JPGReader::JPGReader(poplar::Device &ipuDevice)
   for (auto &channel : m_channels) {
     channel.pixels.resize(m_max_pixels);
   }
-  /*
-    // Setup Channel tensors and streams
-    for (int i = 0; i < 3; ++i) {
-      m_channels[i].tensor_name = "channel_0_pixels";
-      m_channels[i].stream_name = "channel_0_stream";
-      m_channels[i].tensor_name[8] += i;
-      m_channels[i].stream_name[8] += i;
-      m_channels[i].ipu_pixels = m_ipu_graph.addVariable(poplar::UNSIGNED_CHAR, {MAX_PIXELS_Y, MAX_PIXELS_X},
-                                                         m_channels[i].tensor_name);
-      m_channels[i].ipu_pixel_stream =
-          m_ipu_graph.addHostToDeviceFIFO(m_channels[i].stream_name, poplar::UNSIGNED_CHAR, MAX_PIXELS);
-      for (unsigned long y = 0; y < JPGReader::TILES_Y; y++) {
-        for (unsigned long x = 0; x < JPGReader::TILES_X; x++) {
-          m_channels[i].ipu_pixel_patches[y][x] =
-              m_channels[i].ipu_pixels.slice({y * PIXELS_PER_TILE_Y, x * PIXELS_PER_TILE_X},
-                                             {(y + 1) * PIXELS_PER_TILE_Y, (x + 1) * PIXELS_PER_TILE_X});
-          m_ipu_graph.setTileMapping(m_channels[i].ipu_pixel_patches[y][x], y * TILES_X + x);
-        }
-      }
-    }
 
-    // Create and map output tensor //
-    m_out_pixels = m_ipu_graph.addVariable(poplar::UNSIGNED_CHAR, {MAX_PIXELS_Y, MAX_PIXELS_X, 3}, "pixels");
-    m_output_pixels_stream =
-        m_ipu_graph.addDeviceToHostFIFO("pixels-stream", poplar::UNSIGNED_CHAR, MAX_PIXELS * 3);
-    for (unsigned long y = 0; y < JPGReader::TILES_Y; y++) {
-      for (unsigned long x = 0; x < JPGReader::TILES_X; x++) {
-        m_out_pixel_patches[y][x] =
-            m_out_pixels.slice({y * PIXELS_PER_TILE_Y, x * PIXELS_PER_TILE_X, 0},
-                               {(y + 1) * PIXELS_PER_TILE_Y, (x + 1) * PIXELS_PER_TILE_X, 3});
-        m_ipu_graph.setTileMapping(m_out_pixel_patches[y][x], y * TILES_X + x);
-      }
-    }
+  // Setup Intermediate and output pixel tensors + streams
+  m_out_pixels = m_ipu_graph.addVariable(poplar::UNSIGNED_CHAR, {(ulong)m_max_pixels * 3}, "pixels");
+  m_output_pixels_stream =
+      m_ipu_graph.addDeviceToHostFIFO("pixels-stream", poplar::UNSIGNED_CHAR, m_max_pixels * 3);
+  for (int i = 0; i < 3; ++i) {
+    m_channels[i].tensor_name = "channel_0_pixels";
+    m_channels[i].stream_name = "channel_0_stream";
+    m_channels[i].tensor_name[8] += i;
+    m_channels[i].stream_name[8] += i;
+    m_channels[i].ipu_pixels =
+        m_ipu_graph.addVariable(poplar::UNSIGNED_CHAR, {(ulong)m_max_pixels}, m_channels[i].tensor_name);
+    m_channels[i].ipu_pixel_stream =
+        m_ipu_graph.addHostToDeviceFIFO(m_channels[i].stream_name, poplar::UNSIGNED_CHAR, m_max_pixels);
+  }
 
-    // Create colour conversion vertices
-    poplar::ComputeSet colour_vertices = m_ipu_graph.addComputeSet("colour");
-    for (unsigned long y = 0; y < JPGReader::TILES_Y; y++) {
-      for (unsigned long x = 0; x < JPGReader::TILES_X; x++) {
-        poplar::VertexRef vtx = m_ipu_graph.addVertex(colour_vertices, "ColourConversion");
-        m_ipu_graph.connect(vtx["Y"], m_channels[0].ipu_pixel_patches[y][x].flatten());
-        m_ipu_graph.connect(vtx["CB"], m_channels[1].ipu_pixel_patches[y][x].flatten());
-        m_ipu_graph.connect(vtx["CR"], m_channels[2].ipu_pixel_patches[y][x].flatten());
-        m_ipu_graph.connect(vtx["RGB"], m_out_pixel_patches[y][x].flatten());
-        m_ipu_graph.setTileMapping(vtx, y * TILES_X + x);
-        m_ipu_graph.setPerfEstimate(vtx, PIXELS_PER_TILE_X * PIXELS_PER_TILE_Y * 40);
-      }
-    }
+  // Connect inputs to outputs via compute vertex, and map all over tiles
+  poplar::ComputeSet colour_conversion_op = m_ipu_graph.addComputeSet("colour");
+  for (unsigned int tile = 0; tile < m_num_tiles; ++tile) {
+    poplar::VertexRef vtx = m_ipu_graph.addVertex(colour_conversion_op, "ColourConversion");
+    int start = tile * MAX_PIXELS_PER_TILE;
+    int end = (tile + 1) * MAX_PIXELS_PER_TILE;
+    auto Y = m_channels[0].ipu_pixels.slice(start, end);
+    auto CB = m_channels[1].ipu_pixels.slice(start, end);
+    auto CR = m_channels[2].ipu_pixels.slice(start, end);
+    auto RGB = m_out_pixels.slice(start * 3, end * 3);
+    m_ipu_graph.connect(vtx["Y"], Y);
+    m_ipu_graph.connect(vtx["CB"], CB);
+    m_ipu_graph.connect(vtx["CR"], CR);
+    m_ipu_graph.connect(vtx["RGB"], RGB);
+    m_ipu_graph.setTileMapping(vtx, tile);
+    m_ipu_graph.setTileMapping(Y, tile);
+    m_ipu_graph.setTileMapping(CB, tile);
+    m_ipu_graph.setTileMapping(CR, tile);
+    m_ipu_graph.setTileMapping(RGB, tile);
 
-    // Create colour conversion program
-    poplar::program::Sequence ipu_colour_program;
-    for (auto &channel : m_channels) {
-      ipu_colour_program.add(poplar::program::Copy(channel.ipu_pixel_stream, channel.ipu_pixels));
-    }
-    ipu_colour_program.add(poplar::program::Execute(colour_vertices));
-    ipu_colour_program.add(poplar::program::Copy(m_out_pixels, m_output_pixels_stream));
+    m_ipu_graph.setPerfEstimate(vtx, MAX_PIXELS_PER_TILE * 100);
+  }
 
-    // Create poplar engine ("session"?) to execute colour program
-    m_colour_ipuEngine = std::make_unique<poplar::Engine>(m_ipu_graph, ipu_colour_program);
-    m_colour_ipuEngine->connectStream("pixels-stream", m_pixels);
-    for (auto &channel : m_channels) {
-      m_colour_ipuEngine->connectStream(channel.stream_name, channel.pixels);
-    }
+  // Create colour conversion program
+  poplar::program::Sequence ipu_colour_program;
+  for (auto &channel : m_channels) {
+    ipu_colour_program.add(poplar::program::Copy(channel.ipu_pixel_stream, channel.ipu_pixels));
+  }
+  ipu_colour_program.add(poplar::program::Execute(colour_conversion_op));
+  ipu_colour_program.add(poplar::program::Copy(m_out_pixels, m_output_pixels_stream));
 
-    m_colour_ipuEngine->load(ipuDevice);
-    */
+  // Create poplar engine ("session"?) to execute colour program
+  m_colour_ipuEngine = std::make_unique<poplar::Engine>(m_ipu_graph, ipu_colour_program);
+  m_colour_ipuEngine->connectStream("pixels-stream", m_pixels.data());
+  for (auto &channel : m_channels) {
+    m_colour_ipuEngine->connectStream(channel.stream_name, channel.pixels.data());
+  }
+
+  m_colour_ipuEngine->load(ipuDevice);
 };
 
 void JPGReader::read(const char *filename) {

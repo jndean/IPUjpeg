@@ -105,8 +105,7 @@ void JPGReader::iDCT_col(const int *D, unsigned char *out, int stride) {
   *out = clip(((x7 - x1) >> 14) + 128);
 }
 
-
-void JPGReader::upsampleChannelIPU(ColourChannel *channel) {
+void JPGReader::upsampleChannel(ColourChannel *channel) {
   int xshift = 0, yshift = 0;
   while (channel->width < m_width) {
     channel->width <<= 1;
@@ -123,8 +122,8 @@ void JPGReader::upsampleChannelIPU(ColourChannel *channel) {
     for (int in_MCU = 0; in_MCU < m_MCUs_per_tile; ++in_MCU) {
       int in_start = (tile * MAX_PIXELS_PER_TILE) + (in_MCU * channel->pixels_per_MCU);
       for (int y = 0; y < m_MCU_size_y; ++y) {
-        unsigned char *in  = &channel->pixels[in_start + (y >> yshift) * channel->tile_stride];
-        for (int x = 0; x < m_MCU_size_x; ++x){
+        unsigned char *in = &channel->pixels[in_start + (y >> yshift) * channel->tile_stride];
+        for (int x = 0; x < m_MCU_size_x; ++x) {
           *(out++) = in[x >> xshift];
         }
       }
@@ -133,13 +132,11 @@ void JPGReader::upsampleChannelIPU(ColourChannel *channel) {
   channel->pixels = upsampled;
 }
 
-void JPGReader::upsampleAndColourTransformIPU() {
-  // printf("SKIPPING UPSAMPLING\n");
-  
+void JPGReader::upsampleAndColourTransform() {
   int i;
   ColourChannel *channel;
   for (i = 0, channel = &m_channels[0]; i < m_num_channels; ++i, ++channel) {
-    if ((channel->width < m_width) || (channel->height < m_height)) upsampleChannelIPU(channel);
+    if ((channel->width < m_width) || (channel->height < m_height)) upsampleChannel(channel);
     if ((channel->width < m_width) || (channel->height < m_height)) {
       THROW(SYNTAX_ERROR);
     }
@@ -155,5 +152,19 @@ void JPGReader::upsampleAndColourTransformIPU() {
       m_pixels[pixel * 3 + 1] = clip((y - 88 * cb - 183 * cr + 128) >> 8);
       m_pixels[pixel * 3 + 2] = clip((y + 454 * cb + 128) >> 8);
     }
+  }
+}
+
+void JPGReader::upsampleAndColourTransformIPU() {
+  if (m_num_channels == 3) {
+
+    for (auto& channel : m_channels) {
+    if ((channel.width < m_width) || (channel.height < m_height)) upsampleChannel(&channel);
+    if ((channel.width < m_width) || (channel.height < m_height)) {
+      THROW(SYNTAX_ERROR);
+    }
+  }
+
+    m_colour_ipuEngine->run(0);
   }
 }
