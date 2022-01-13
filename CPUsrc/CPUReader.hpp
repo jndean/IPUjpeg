@@ -33,8 +33,8 @@ private:
     unsigned char *m_buf, *m_pos, *m_end;
     unsigned int m_size;
     unsigned short m_width, m_height;
-    unsigned short m_num_blocks_x, m_num_blocks_y;
-    unsigned short m_block_size_x, m_block_size_y;
+    unsigned short m_num_MCUs_x, m_num_MCUs_y;
+    unsigned short m_MCU_size_x, m_MCU_size_y;
     unsigned char m_num_channels;
     int m_error;
     ColourChannel m_channels[3];

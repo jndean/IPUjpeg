@@ -1,6 +1,6 @@
 TARGET   = main
 
-CFLAGS   = --std=c++11 -Wall -O3
+CFLAGS   = --std=c++14 -Wall -O3 -Wextra
 LIBS     = -lpoplar
 INCS     = -I/opt/poplar/include
 
@@ -9,6 +9,9 @@ default: main.o JPGReader.o JPGReader_UpsampleColourTransform.o JPGReader_decode
 
 %.o: %.cpp JPGReader.hpp
 	g++ ${CFLAGS} -c $< ${INCS} ${LIBS} -o $@
+
+%.gp: %.cpp JPGReader.hpp
+	popc $< -o $@
 
 clean:
 	rm *.o ${TARGET} outfile.ppm outfile.pgm

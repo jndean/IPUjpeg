@@ -168,21 +168,21 @@ void CPUReader::decodeSOF()
   }
 
   // Compute dimensions in blocks and allocate output space //
-  m_block_size_x = samples_x_max << 3;
-  m_block_size_y = samples_y_max << 3;
-  m_num_blocks_x = (m_width + m_block_size_x - 1) / m_block_size_x;
-  m_num_blocks_y = (m_height + m_block_size_y - 1) / m_block_size_y;
+  m_MCU_size_x = samples_x_max << 3;
+  m_MCU_size_y = samples_y_max << 3;
+  m_num_MCUs_x = (m_width + m_MCU_size_x - 1) / m_MCU_size_x;
+  m_num_MCUs_y = (m_height + m_MCU_size_y - 1) / m_MCU_size_y;
   
   for(i = 0, chan = m_channels; i < m_num_channels; i++, chan++){
     chan->width = (m_width * chan->samples_x + samples_x_max -1) / samples_x_max;
     chan->height = (m_height * chan->samples_y + samples_y_max -1) / samples_y_max;
-    chan->stride = m_num_blocks_x * (chan->samples_x << 3);
+    chan->stride = m_num_MCUs_x * (chan->samples_x << 3);
     
     if(((chan->width < 3) && (chan->samples_x != samples_x_max)) ||
        ((chan->height < 3) && (chan->samples_y != samples_y_max)))
       THROW(UNSUPPORTED_ERROR);
     
-    chan->pixels = new unsigned char[chan->stride * m_num_blocks_y * (chan->samples_y << 3)];
+    chan->pixels = new unsigned char[chan->stride * m_num_MCUs_y * (chan->samples_y << 3)];
     if(!chan->pixels) THROW(OOM_ERROR);
   }
   if(m_num_channels == 3){

@@ -35,9 +35,9 @@ void CPUReader::decodeScanCPU()
     int next_restart_index = 0;
 
     // Loop over all blocks
-    for (int block_y = 0; block_y < m_num_blocks_y; block_y++)
+    for (int block_y = 0; block_y < m_num_MCUs_y; block_y++)
     {
-        for (int block_x = 0; block_x < m_num_blocks_x; block_x++)
+        for (int block_x = 0; block_x < m_num_MCUs_x; block_x++)
         {
 
             // Loop over all channels //

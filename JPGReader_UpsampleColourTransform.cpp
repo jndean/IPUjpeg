@@ -3,9 +3,7 @@
 
 #include "JPGReader.hpp"
 
-inline unsigned char clip(const int x) {
-  return (x < 0) ? 0 : ((x > 0xFF) ? 0xFF : (unsigned char)x);
-}
+inline unsigned char clip(const int x) { return (x < 0) ? 0 : ((x > 0xFF) ? 0xFF : (unsigned char)x); }
 
 // DCT is done in place (or elsewher if specified) by doing iDCT_row on each
 // row of a block, then iDCT column on each column.
@@ -20,8 +18,8 @@ inline unsigned char clip(const int x) {
 
 void JPGReader::iDCT_row(int *D) {
   int x0, x1, x2, x3, x4, x5, x6, x7, x8;
-  if (!((x1 = D[4] << 11) | (x2 = D[6]) | (x3 = D[2]) | (x4 = D[1]) |
-        (x5 = D[7]) | (x6 = D[5]) | (x7 = D[3]))) {
+  if (!((x1 = D[4] << 11) | (x2 = D[6]) | (x3 = D[2]) | (x4 = D[1]) | (x5 = D[7]) | (x6 = D[5]) |
+        (x7 = D[3]))) {
     D[0] = D[1] = D[2] = D[3] = D[4] = D[5] = D[6] = D[7] = D[0] << 3;
     return;
   }
@@ -59,9 +57,8 @@ void JPGReader::iDCT_row(int *D) {
 
 void JPGReader::iDCT_col(const int *D, unsigned char *out, int stride) {
   int x0, x1, x2, x3, x4, x5, x6, x7, x8;
-  if (!((x1 = D[8 * 4] << 8) | (x2 = D[8 * 6]) | (x3 = D[8 * 2]) |
-        (x4 = D[8 * 1]) | (x5 = D[8 * 7]) | (x6 = D[8 * 5]) |
-        (x7 = D[8 * 3]))) {
+  if (!((x1 = D[8 * 4] << 8) | (x2 = D[8 * 6]) | (x3 = D[8 * 2]) | (x4 = D[8 * 1]) | (x5 = D[8 * 7]) |
+        (x6 = D[8 * 5]) | (x7 = D[8 * 3]))) {
     x1 = clip(((D[0] + 32) >> 6) + 128);
     for (x0 = 8; x0; --x0) {
       *out = (unsigned char)x1;
@@ -108,9 +105,9 @@ void JPGReader::iDCT_col(const int *D, unsigned char *out, int stride) {
   *out = clip(((x7 - x1) >> 14) + 128);
 }
 
-void JPGReader::upsampleChannel(ColourChannel *channel) {
-  int x, y, xshift = 0, yshift = 0;
-  unsigned char *out, *lout;
+
+void JPGReader::upsampleChannelIPU(ColourChannel *channel) {
+  int xshift = 0, yshift = 0;
   while (channel->width < m_width) {
     channel->width <<= 1;
     ++xshift;
@@ -119,59 +116,44 @@ void JPGReader::upsampleChannel(ColourChannel *channel) {
     channel->height <<= 1;
     ++yshift;
   }
-  printf("x scale=%d, y scale=%d\n", 1 << xshift, 1 << yshift);
-  out = new unsigned char[channel->width * channel->height];
-  if (!out) THROW(OOM_ERROR);
 
-  for (y = 0, lout = out; y < channel->height; ++y, lout += channel->width) {
-    unsigned char *lin = &channel->pixels[(y >> yshift) * channel->stride];
-    for (x = 0; x < channel->width; ++x) lout[x] = lin[x >> xshift];
+  std::vector<unsigned char> upsampled(MAX_PIXELS_PER_TILE * m_num_active_tiles);
+  for (int tile = 0; tile < m_num_active_tiles; tile++) {
+    unsigned char *out = &upsampled[tile * MAX_PIXELS_PER_TILE];
+    for (int in_MCU = 0; in_MCU < m_MCUs_per_tile; ++in_MCU) {
+      int in_start = (tile * MAX_PIXELS_PER_TILE) + (in_MCU * channel->pixels_per_MCU);
+      for (int y = 0; y < m_MCU_size_y; ++y) {
+        unsigned char *in  = &channel->pixels[in_start + (y >> yshift) * channel->tile_stride];
+        for (int x = 0; x < m_MCU_size_x; ++x){
+          *(out++) = in[x >> xshift];
+        }
+      }
+    }
   }
-
-  channel->stride = channel->width;
-  delete channel->pixels;
-  channel->pixels = out;
+  channel->pixels = upsampled;
 }
 
-void JPGReader::upsampleAndColourTransform() {
+void JPGReader::upsampleAndColourTransformIPU() {
+  // printf("SKIPPING UPSAMPLING\n");
+  
   int i;
   ColourChannel *channel;
   for (i = 0, channel = &m_channels[0]; i < m_num_channels; ++i, ++channel) {
-    if ((channel->width < m_width) || (channel->height < m_height))
-      upsampleChannel(channel);
+    if ((channel->width < m_width) || (channel->height < m_height)) upsampleChannelIPU(channel);
     if ((channel->width < m_width) || (channel->height < m_height)) {
       THROW(SYNTAX_ERROR);
     }
   }
+  
   if (m_num_channels == 3) {
     // convert to RGB //
-    unsigned char *prgb = m_pixels;
-    const unsigned char *py = m_channels[0].pixels;
-    const unsigned char *pcb = m_channels[1].pixels;
-    const unsigned char *pcr = m_channels[2].pixels;
-    for (int yy = m_height; yy; --yy) {
-      for (int x = 0; x < m_width; ++x) {
-        register int y = py[x] << 8;
-        register int cb = pcb[x] - 128;
-        register int cr = pcr[x] - 128;
-        *prgb++ = clip((y + 359 * cr + 128) >> 8);
-        *prgb++ = clip((y - 88 * cb - 183 * cr + 128) >> 8);
-        *prgb++ = clip((y + 454 * cb + 128) >> 8);
-      }
-      py += m_channels[0].stride;
-      pcb += m_channels[1].stride;
-      pcr += m_channels[2].stride;
+    for (size_t pixel = 0; pixel < m_num_active_tiles * MAX_PIXELS_PER_TILE; ++pixel) {
+      int y = m_channels[0].pixels[pixel] << 8;
+      int cb = m_channels[1].pixels[pixel] - 128;
+      int cr = m_channels[2].pixels[pixel] - 128;
+      m_pixels[pixel * 3 + 0] = clip((y + 359 * cr + 128) >> 8);
+      m_pixels[pixel * 3 + 1] = clip((y - 88 * cb - 183 * cr + 128) >> 8);
+      m_pixels[pixel * 3 + 2] = clip((y + 454 * cb + 128) >> 8);
     }
-  } else if (m_channels[0].width != m_channels[0].stride) {
-    // grayscale -> only remove stride
-    ColourChannel *channel = &m_channels[0];
-    unsigned char *pin = &channel->pixels[channel->stride];
-    unsigned char *pout = &channel->pixels[channel->width];
-    for (int y = channel->height - 1; y; --y) {
-      memcpy(pout, pin, channel->width);
-      pin += channel->stride;
-      pout += channel->width;
-    }
-    channel->stride = channel->width;
   }
 }

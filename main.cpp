@@ -1,26 +1,25 @@
-#include "JPGReader.hpp"
-
 #include <stdlib.h>
 
-#include <poplar/IPUModel.hpp>
 #include <poplar/Engine.hpp>
+#include <poplar/IPUModel.hpp>
 
-int main(int argc, char** argv)
-{
-    if (argc != 2) {
-        printf("USAGE: %s <jpgfile>\n", argv[0]);
-        return EXIT_FAILURE;
-    }
-    
-    poplar::IPUModel ipuModel;
-    poplar::Device ipuDevice = ipuModel.createDevice();
-    poplar::Target ipuTarget = ipuDevice.getTarget();
+#include "JPGReader.hpp"
 
-    JPGReader reader(ipuTarget);
-    reader.read(argv[1]);
-    reader.decode();
+int main(int argc, char** argv) {
+  if (argc != 2) {
+    printf("USAGE: %s <jpgfile>\n", argv[0]);
+    return EXIT_FAILURE;
+  }
 
-    reader.write(reader.isGreyScale() ? "outfile.pgm" : "outfile.ppm");
+  poplar::IPUModel ipuModel;
+  poplar::Device ipuDevice = ipuModel.createDevice();
+  poplar::Target ipuTarget = ipuDevice.getTarget();
 
-    return EXIT_SUCCESS;
+  auto reader = std::make_unique<JPGReader>(ipuDevice);
+  reader->read(argv[1]);
+  reader->decode();
+
+  reader->write(reader->isGreyScale() ? "outfile.pgm" : "outfile.ppm");
+
+  return EXIT_SUCCESS;
 }

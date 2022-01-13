@@ -15,8 +15,7 @@ void JPGReader::decodeScanCPU() {
   if (*(pos++) != m_num_channels) THROW(UNSUPPORTED_ERROR);
   int i;
   ColourChannel *channel;
-  for (i = 0, channel = m_channels; i < m_num_channels;
-       i++, channel++, pos += 2) {
+  for (i = 0, channel = m_channels; i < m_num_channels; i++, channel++, pos += 2) {
     if (pos[0] != channel->id) THROW(SYNTAX_ERROR);
     if (pos[1] & 0xEE) THROW(SYNTAX_ERROR);
     channel->dc_id = pos[1] >> 4;
@@ -25,36 +24,36 @@ void JPGReader::decodeScanCPU() {
   if (pos[0] || (pos[1] != 63) || pos[2]) THROW(UNSUPPORTED_ERROR);
   pos = m_pos = m_pos + header_len;
 
-  int restart_interval = m_restart_interval;
-  int restart_count = restart_interval;
+  // Iterate over blocks and decode them! //
+  int restart_count = m_restart_interval;
+  const int total_MCUs = m_num_MCUs_x * m_num_MCUs_y;
+  int completed_MCUs = 0;
 
-  // Loop over all blocks
-  for (int block_y = 0; block_y < m_num_blocks_y; block_y++) {
-    for (int block_x = 0; block_x < m_num_blocks_x; block_x++) {
-      // Loop over all channels //
-      for (i = 0, channel = m_channels; i < m_num_channels; i++, channel++) {
-        // Loop over samples in block //
+  for (int tile = 0; tile < m_num_active_tiles; ++tile) {
+    for (int MCU = 0; MCU < m_MCUs_per_tile && completed_MCUs < total_MCUs; ++MCU, ++completed_MCUs) {
+      for (i = 0, channel = m_channels; i < m_num_channels; ++i, ++channel) {
+
+        int MCU_start = (tile * MAX_PIXELS_PER_TILE) + (MCU * channel->pixels_per_MCU);
+
         for (int sample_y = 0; sample_y < channel->samples_y; ++sample_y) {
           for (int sample_x = 0; sample_x < channel->samples_x; ++sample_x) {
-            int out_pos =
-                ((block_y * channel->samples_y + sample_y) * channel->stride +
-                 block_x * channel->samples_x + sample_x)
-                << 3;
+
+            int out_pos = MCU_start + (sample_y * channel->tile_stride * 8) + (sample_x * 8);
             decodeBlock(channel, &channel->pixels[out_pos]);
             if (m_error) return;
           }
         }
       }
 
-      if (restart_interval && !(--restart_count)) {
-        // Byte align //
+      if (m_restart_interval && !(--restart_count)) {
+        // Byte align the read head //
         m_num_bufbits &= 0xF8;
         int marker_bits = getBits(16);
         if ((marker_bits & 0xFF00) != 0xFF00) {
           THROW(SYNTAX_ERROR);
         }
-        restart_count = restart_interval;
-        for (ColourChannel& channel: m_channels) {
+        restart_count = m_restart_interval;
+        for (ColourChannel &channel : m_channels) {
           channel.dc_cumulative_val = 0;
         }
       }
@@ -83,8 +82,7 @@ void JPGReader::decodeBlock(ColourChannel *channel, unsigned char *out) {
 
   // Invert the DCT //
   for (coef = 0; coef < 64; coef += 8) iDCT_row(&block[coef]);
-  for (coef = 0; coef < 8; ++coef)
-    iDCT_col(&block[coef], &out[coef], channel->stride);
+  for (coef = 0; coef < 8; ++coef) iDCT_col(&block[coef], &out[coef], channel->tile_stride);
 }
 
 int JPGReader::getVLC(DhtVlc *vlc_table, unsigned char *code) {
@@ -99,7 +97,7 @@ int JPGReader::getVLC(DhtVlc *vlc_table, unsigned char *code) {
   unsigned char num_bits = vlc.tuple & 0x0F;
   if (!num_bits) return 0;
   int value = getBits(num_bits);
-  if (value < (1 << (num_bits - 1))) value += ((-1) << num_bits) + 1;
+  if (value < (1 << (num_bits - 1))) value += ((0xffffffff) << num_bits) + 1;
   return value;
 }
 
