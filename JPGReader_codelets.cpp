@@ -1,11 +1,15 @@
 
 #include <poplar/Vertex.hpp>
 
+#include "JPGReader_params.hpp"
+
+
 inline unsigned char clip(const int x) { return (x < 0) ? 0 : ((x > 0xFF) ? 0xFF : (unsigned char)x); }
 
 class ColourConversion : public poplar::Vertex {
  public:
-  // Fields
+  poplar::Input<poplar::Vector<int>> params;
+
   poplar::Input<poplar::Vector<unsigned char>> Y;
   poplar::Input<poplar::Vector<unsigned char>> CB;
   poplar::Input<poplar::Vector<unsigned char>> CR;
@@ -14,7 +18,8 @@ class ColourConversion : public poplar::Vertex {
 
   // Compute function
   bool compute() {
-    for (int i = 0; i < Y.size(); i += 1) {
+    int total_pixels = params[param_MCUs_per_tile] * params[param_Y_MCU_size];
+    for (int i = 0; i < total_pixels; i += 1) {
       int y = ((int)Y[i]) << 8;
       int cb = ((int)CB[i]) - 128;
       int cr = ((int)CR[i]) - 128;

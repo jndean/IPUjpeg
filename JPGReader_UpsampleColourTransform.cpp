@@ -165,6 +165,9 @@ void JPGReader::upsampleAndColourTransformIPU() {
     }
   }
 
+    m_IPU_params_table[param_MCUs_per_tile] = m_MCUs_per_tile;
+    m_IPU_params_table[param_Y_MCU_size] = m_channels[0].pixels_per_MCU;
+    m_IPU_params_table[param_Y_MCU_stride] = m_channels[0].tile_stride;
     m_colour_ipuEngine->run(0);
   }
 }

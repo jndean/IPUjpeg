@@ -10,7 +10,7 @@ int main(int argc, char** argv) {
     printf("USAGE: %s <jpgfile>\n", argv[0]);
     return EXIT_FAILURE;
   }
-
+  
   poplar::IPUModel ipuModel;
   poplar::Device ipuDevice = ipuModel.createDevice();
   poplar::Target ipuTarget = ipuDevice.getTarget();

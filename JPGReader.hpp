@@ -6,6 +6,9 @@
 #include <string>
 #include <vector>
 
+#include "JPGReader_params.hpp"
+
+
 #define NO_ERROR 0
 #define SYNTAX_ERROR 1
 #define UNSUPPORTED_ERROR 2
@@ -67,6 +70,9 @@ class JPGReader {
   poplar::Tensor m_out_pixels;
   std::vector<poplar::Tensor> m_out_pixel_patches;
   poplar::DataStream m_output_pixels_stream;
+  int m_IPU_params_table[PARAMS_SIZE];
+  poplar::Tensor m_IPU_params_tensor;
+
 
   std::vector<unsigned char> m_buf;
   unsigned char *m_pos, *m_end;

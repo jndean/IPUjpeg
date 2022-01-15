@@ -23,6 +23,11 @@ JPGReader::JPGReader(poplar::Device &ipuDevice)
       m_num_bufbits(0) {
   m_ipu_graph.addCodelets("JPGReader_codelets.gp");
 
+  m_IPU_params_tensor = m_ipu_graph.addVariable(poplar::INT, {(ulong) PARAMS_SIZE}, "params_table");
+  m_ipu_graph.setTileMapping(m_IPU_params_tensor, 0);
+  auto IPU_params_stream = m_ipu_graph.addHostToDeviceFIFO("params-stream", poplar::INT, PARAMS_SIZE);
+
+
   for (auto &channel : m_channels) {
     channel.pixels.resize(m_max_pixels);
   }
@@ -52,6 +57,7 @@ JPGReader::JPGReader(poplar::Device &ipuDevice)
     auto CB = m_channels[1].ipu_pixels.slice(start, end);
     auto CR = m_channels[2].ipu_pixels.slice(start, end);
     auto RGB = m_out_pixels.slice(start * 3, end * 3);
+    m_ipu_graph.connect(vtx["params"], m_IPU_params_tensor);
     m_ipu_graph.connect(vtx["Y"], Y);
     m_ipu_graph.connect(vtx["CB"], CB);
     m_ipu_graph.connect(vtx["CR"], CR);
@@ -67,6 +73,7 @@ JPGReader::JPGReader(poplar::Device &ipuDevice)
 
   // Create colour conversion program
   poplar::program::Sequence ipu_colour_program;
+  ipu_colour_program.add(poplar::program::Copy(IPU_params_stream, m_IPU_params_tensor));
   for (auto &channel : m_channels) {
     ipu_colour_program.add(poplar::program::Copy(channel.ipu_pixel_stream, channel.ipu_pixels));
   }
@@ -75,6 +82,7 @@ JPGReader::JPGReader(poplar::Device &ipuDevice)
 
   // Create poplar engine ("session"?) to execute colour program
   m_colour_ipuEngine = std::make_unique<poplar::Engine>(m_ipu_graph, ipu_colour_program);
+  m_colour_ipuEngine->connectStream("params-stream", m_IPU_params_table);
   m_colour_ipuEngine->connectStream("pixels-stream", m_pixels.data());
   for (auto &channel : m_channels) {
     m_colour_ipuEngine->connectStream(channel.stream_name, channel.pixels.data());
