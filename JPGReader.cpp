@@ -293,8 +293,8 @@ void JPGReader::decodeSOF() {
     chan->height = (m_height * chan->samples_y + samples_y_max - 1) / samples_y_max;
     chan->tile_stride = chan->samples_x * 8;
     chan->pixels_per_MCU = chan->samples_x * 8 * chan->samples_y * 8;
-    chan->downsampled_x = samples_x_max / chan->samples_x;
-    chan->downsampled_y = samples_y_max / chan->samples_y;
+    chan->downshift_x = __builtin_ctz(samples_x_max / chan->samples_x);
+    chan->downshift_y = __builtin_ctz(samples_y_max / chan->samples_y);
 
     if (((chan->width < 3) && (chan->samples_x != samples_x_max)) ||
         ((chan->height < 3) && (chan->samples_y != samples_y_max)))

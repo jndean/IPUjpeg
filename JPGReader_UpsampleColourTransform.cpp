@@ -141,7 +141,7 @@ void JPGReader::upsampleAndColourTransform() {
       THROW(SYNTAX_ERROR);
     }
   }
-  
+
   if (m_num_channels == 3) {
     // convert to RGB //
     for (size_t pixel = 0; pixel < m_num_active_tiles * MAX_PIXELS_PER_TILE; ++pixel) {
@@ -157,17 +157,18 @@ void JPGReader::upsampleAndColourTransform() {
 
 void JPGReader::upsampleAndColourTransformIPU() {
   if (m_num_channels == 3) {
-
-    for (auto& channel : m_channels) {
-    if ((channel.width < m_width) || (channel.height < m_height)) upsampleChannel(&channel);
-    if ((channel.width < m_width) || (channel.height < m_height)) {
-      THROW(SYNTAX_ERROR);
-    }
-  }
-
     m_IPU_params_table[param_MCUs_per_tile] = m_MCUs_per_tile;
-    m_IPU_params_table[param_Y_MCU_size] = m_channels[0].pixels_per_MCU;
-    m_IPU_params_table[param_Y_MCU_stride] = m_channels[0].tile_stride;
+    m_IPU_params_table[param_MCU_height] = m_MCU_size_y;
+    m_IPU_params_table[param_MCU_width] = m_MCU_size_x;
+    m_IPU_params_table[param_CB_downshift_x] = m_channels[1].downshift_x;
+    m_IPU_params_table[param_CB_downshift_y] = m_channels[1].downshift_y;
+    m_IPU_params_table[param_CR_downshift_x] = m_channels[2].downshift_x;
+    m_IPU_params_table[param_CR_downshift_y] = m_channels[2].downshift_y;
+
+    printf("CB_x=%d, CB_y=%d, CR_x=%d, CR_y=%d\n", 
+           m_channels[1].downshift_x, m_channels[1].downshift_y, 
+           m_channels[2].downshift_x, m_channels[2].downshift_y);
+
     m_colour_ipuEngine->run(0);
   }
 }

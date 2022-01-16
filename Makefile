@@ -7,10 +7,10 @@ INCS     = -I/opt/poplar/include
 default: main.o JPGReader.o JPGReader_UpsampleColourTransform.o JPGReader_decodescan.o
 	g++ ${CFLAGS} $^ ${INCS} ${LIBS} -o ${TARGET}
 
-%.o: %.cpp JPGReader.hpp
+%.o: %.cpp JPGReader.hpp JPGReader_params.hpp
 	g++ ${CFLAGS} -c $< ${INCS} ${LIBS} -o $@
 
-%.gp: %.cpp JPGReader.hpp
+%.gp: %.cpp JPGReader.hpp JPGReader_params.hpp
 	popc $< -o $@
 
 clean:

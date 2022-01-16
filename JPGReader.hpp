@@ -30,7 +30,7 @@ typedef struct _ColourChannel {
   int dq_id, ac_id, dc_id;
   int width, height;
   int samples_x, samples_y;
-  int downsampled_x, downsampled_y;
+  int downshift_x, downshift_y;
   int tile_stride, pixels_per_MCU;
   int dc_cumulative_val;
   std::vector<unsigned char> pixels;
