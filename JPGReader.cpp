@@ -23,10 +23,9 @@ JPGReader::JPGReader(poplar::Device &ipuDevice)
       m_num_bufbits(0) {
   m_ipu_graph.addCodelets("JPGReader_codelets.gp");
 
-  m_IPU_params_tensor = m_ipu_graph.addVariable(poplar::INT, {(ulong) PARAMS_SIZE}, "params_table");
+  m_IPU_params_tensor = m_ipu_graph.addVariable(poplar::INT, {(ulong)PARAMS_SIZE}, "params_table");
   m_ipu_graph.setTileMapping(m_IPU_params_tensor, 0);
   auto IPU_params_stream = m_ipu_graph.addHostToDeviceFIFO("params-stream", poplar::INT, PARAMS_SIZE);
-
 
   for (auto &channel : m_channels) {
     channel.pixels.resize(m_max_pixels);
@@ -48,9 +47,9 @@ JPGReader::JPGReader(poplar::Device &ipuDevice)
   }
 
   // Connect inputs to outputs via compute vertex, and map all over tiles
-  poplar::ComputeSet colour_conversion_op = m_ipu_graph.addComputeSet("colour");
+  poplar::ComputeSet postprocess_op = m_ipu_graph.addComputeSet("postprocess");
   for (unsigned int tile = 0; tile < m_num_tiles; ++tile) {
-    poplar::VertexRef vtx = m_ipu_graph.addVertex(colour_conversion_op, "ColourConversion");
+    poplar::VertexRef vtx = m_ipu_graph.addVertex(postprocess_op, "Postprocess");
     int start = tile * MAX_PIXELS_PER_TILE;
     int end = (tile + 1) * MAX_PIXELS_PER_TILE;
     auto Y = m_channels[0].ipu_pixels.slice(start, end);
@@ -72,23 +71,23 @@ JPGReader::JPGReader(poplar::Device &ipuDevice)
   }
 
   // Create colour conversion program
-  poplar::program::Sequence ipu_colour_program;
-  ipu_colour_program.add(poplar::program::Copy(IPU_params_stream, m_IPU_params_tensor));
+  poplar::program::Sequence ipu_postprocess_program;
+  ipu_postprocess_program.add(poplar::program::Copy(IPU_params_stream, m_IPU_params_tensor));
   for (auto &channel : m_channels) {
-    ipu_colour_program.add(poplar::program::Copy(channel.ipu_pixel_stream, channel.ipu_pixels));
+    ipu_postprocess_program.add(poplar::program::Copy(channel.ipu_pixel_stream, channel.ipu_pixels));
   }
-  ipu_colour_program.add(poplar::program::Execute(colour_conversion_op));
-  ipu_colour_program.add(poplar::program::Copy(m_out_pixels, m_output_pixels_stream));
+  ipu_postprocess_program.add(poplar::program::Execute(postprocess_op));
+  ipu_postprocess_program.add(poplar::program::Copy(m_out_pixels, m_output_pixels_stream));
 
   // Create poplar engine ("session"?) to execute colour program
-  m_colour_ipuEngine = std::make_unique<poplar::Engine>(m_ipu_graph, ipu_colour_program);
-  m_colour_ipuEngine->connectStream("params-stream", m_IPU_params_table);
-  m_colour_ipuEngine->connectStream("pixels-stream", m_pixels.data());
+  m_ipuEngine = std::make_unique<poplar::Engine>(m_ipu_graph, ipu_postprocess_program);
+  m_ipuEngine->connectStream("params-stream", m_IPU_params_table);
+  m_ipuEngine->connectStream("pixels-stream", m_pixels.data());
   for (auto &channel : m_channels) {
-    m_colour_ipuEngine->connectStream(channel.stream_name, channel.pixels.data());
+    m_ipuEngine->connectStream(channel.stream_name, channel.pixels.data());
   }
 
-  m_colour_ipuEngine->load(ipuDevice);
+  m_ipuEngine->load(ipuDevice);
 };
 
 void JPGReader::read(const char *filename) {
@@ -147,6 +146,7 @@ int JPGReader::decode() {
       break;
     }
     m_pos += 2;
+    // printf("m_pos=%d, val = 0x(FF)%x\n", m_pos - m_buf.data(), m_pos[-1]);
     switch (m_pos[-1]) {
       case 0xC0:
         decodeSOF();
@@ -169,14 +169,15 @@ int JPGReader::decode() {
       case 0xD9:
         break;
       default:
-        if ((m_pos[-1] & 0xF0) == 0xE0)
+        if ((m_pos[-1] & 0xF0) == 0xE0) {
           skipBlock();
-        else
+        } else {
           m_error = SYNTAX_ERROR;
+        }
     }
 
     // Finished //
-    if (m_pos[-1] == 0xD9) {
+    if (m_pos[-1] == 0xD9 && m_pos == m_end) {
       upsampleAndColourTransformIPU();
       break;
     }
@@ -233,7 +234,10 @@ void JPGReader::write(const char *filename) {
 
 unsigned short JPGReader::read16(const unsigned char *pos) { return (pos[0] << 8) | pos[1]; }
 
-void JPGReader::skipBlock() { m_pos += read16(m_pos); }
+void JPGReader::skipBlock() {
+  unsigned short block_len = read16(m_pos);
+  m_pos += block_len;
+}
 
 void JPGReader::decodeSOF() {
   unsigned char *block = m_pos;
@@ -282,10 +286,10 @@ void JPGReader::decodeSOF() {
   m_MCUs_per_tile = (m_num_MCUs_x * m_num_MCUs_y + m_num_tiles - 1) / m_num_tiles;
   m_num_active_tiles = (m_num_MCUs_x * m_num_MCUs_y + m_MCUs_per_tile - 1) / m_MCUs_per_tile;
 
-  if (m_num_MCUs_x * m_MCU_size_x * m_num_MCUs_y * m_MCU_size_y > m_max_pixels) {
+  if (m_MCU_size_x * m_MCU_size_y * m_MCUs_per_tile > MAX_PIXELS_PER_TILE) {
     throw std::runtime_error(
-        "Too many MCUs => too many output pixels. "
-        "In the future trigger extra downsampling here.");
+        "Image too big. Increase JPGReader::MAX_PIXELS_PER_TILE. "
+        "In the future trigger extra downsampling here instead of erroring.");
   }
 
   for (i = 0, chan = m_channels; i < m_num_channels; i++, chan++) {

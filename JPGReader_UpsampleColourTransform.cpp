@@ -157,6 +157,7 @@ void JPGReader::upsampleAndColourTransform() {
 
 void JPGReader::upsampleAndColourTransformIPU() {
   if (m_num_channels == 3) {
+
     m_IPU_params_table[param_MCUs_per_tile] = m_MCUs_per_tile;
     m_IPU_params_table[param_MCU_height] = m_MCU_size_y;
     m_IPU_params_table[param_MCU_width] = m_MCU_size_x;
@@ -165,10 +166,6 @@ void JPGReader::upsampleAndColourTransformIPU() {
     m_IPU_params_table[param_CR_downshift_x] = m_channels[2].downshift_x;
     m_IPU_params_table[param_CR_downshift_y] = m_channels[2].downshift_y;
 
-    printf("CB_x=%d, CB_y=%d, CR_x=%d, CR_y=%d\n", 
-           m_channels[1].downshift_x, m_channels[1].downshift_y, 
-           m_channels[2].downshift_x, m_channels[2].downshift_y);
-
-    m_colour_ipuEngine->run(0);
+    m_ipuEngine->run(0);
   }
 }

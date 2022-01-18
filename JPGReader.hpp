@@ -56,9 +56,7 @@ class JPGReader {
   bool isGreyScale();
   bool readyToDecode();
 
-  static const ulong MAX_PIXELS_PER_TILE_Y = 64;
-  static const ulong MAX_PIXELS_PER_TILE_X = 64;
-  static const ulong MAX_PIXELS_PER_TILE = MAX_PIXELS_PER_TILE_X * MAX_PIXELS_PER_TILE_Y;
+  static const ulong MAX_PIXELS_PER_TILE = 64 * 64;
 
  private:
   bool m_ready_to_decode;
@@ -66,7 +64,7 @@ class JPGReader {
   poplar::Graph m_ipu_graph;
   unsigned m_num_tiles;
   int m_max_pixels;
-  std::unique_ptr<poplar::Engine> m_colour_ipuEngine;
+  std::unique_ptr<poplar::Engine> m_ipuEngine;
   poplar::Tensor m_out_pixels;
   std::vector<poplar::Tensor> m_out_pixel_patches;
   poplar::DataStream m_output_pixels_stream;

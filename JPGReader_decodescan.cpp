@@ -63,7 +63,7 @@ void JPGReader::decodeScanCPU() {
 
 void JPGReader::decodeBlock(ColourChannel *channel, unsigned char *out) {
   unsigned char code = 0;
-  int value, coef = 0;
+  int coef = 0;
   int *block = m_block_space;
   memset(block, 0, 64 * sizeof(int));
 
@@ -72,14 +72,15 @@ void JPGReader::decodeBlock(ColourChannel *channel, unsigned char *out) {
   block[0] = (channel->dc_cumulative_val) * m_dq_tables[channel->dq_id][0];
   // Read  AC values //
   do {
-    value = getVLC(&m_vlc_tables[channel->ac_id][0], &code);
+    int value = getVLC(&m_vlc_tables[channel->ac_id][0], &code);
     if (!code) break;  // EOB marker //
     if (!(code & 0x0F) && (code != 0xF0)) THROW(SYNTAX_ERROR);
     coef += (code >> 4) + 1;
-    if (coef > 63) THROW(SYNTAX_ERROR);
+    if (coef >= 64) THROW(SYNTAX_ERROR);
     block[(int)deZigZag[coef]] = value * m_dq_tables[channel->dq_id][coef];
+    if (block[(int)deZigZag[coef]] > 0x700) printf("Lorge\n");
   } while (coef < 63);
-
+  
   // Invert the DCT //
   for (coef = 0; coef < 64; coef += 8) iDCT_row(&block[coef]);
   for (coef = 0; coef < 8; ++coef) iDCT_col(&block[coef], &out[coef], channel->tile_stride);
