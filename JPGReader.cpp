@@ -12,8 +12,10 @@
     }                     \
   } while (0)
 
-JPGReader::JPGReader(poplar::Device &ipuDevice)
+
+JPGReader::JPGReader(poplar::Device &ipuDevice, bool IPU_iDCT)
     : m_ready_to_decode(false),
+      m_IPU_iDCT(IPU_iDCT),
       m_ipu_graph(ipuDevice.getTarget()),
       m_num_tiles(ipuDevice.getTarget().getNumTiles()),
       m_max_pixels(m_num_tiles * MAX_PIXELS_PER_TILE),
@@ -29,6 +31,7 @@ JPGReader::JPGReader(poplar::Device &ipuDevice)
 
   for (auto &channel : m_channels) {
     channel.pixels.resize(m_max_pixels);
+    channel.frequencies.resize(m_max_pixels);
   }
 
   // Setup Intermediate and output pixel tensors + streams
@@ -286,7 +289,7 @@ void JPGReader::decodeSOF() {
   m_MCUs_per_tile = (m_num_MCUs_x * m_num_MCUs_y + m_num_tiles - 1) / m_num_tiles;
   m_num_active_tiles = (m_num_MCUs_x * m_num_MCUs_y + m_MCUs_per_tile - 1) / m_MCUs_per_tile;
 
-  if (m_MCU_size_x * m_MCU_size_y * m_MCUs_per_tile > MAX_PIXELS_PER_TILE) {
+  if (m_MCU_size_x * m_MCU_size_y * m_MCUs_per_tile > (int) MAX_PIXELS_PER_TILE) {
     throw std::runtime_error(
         "Image too big. Increase JPGReader::MAX_PIXELS_PER_TILE. "
         "In the future trigger extra downsampling here instead of erroring.");

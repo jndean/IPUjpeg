@@ -1,6 +1,6 @@
 
-make
-
+make && \
+\
 for img in imgs/*.jpg
 do
     ./main $img

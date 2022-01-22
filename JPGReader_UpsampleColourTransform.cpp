@@ -16,13 +16,16 @@ inline unsigned char clip(const int x) { return (x < 0) ? 0 : ((x > 0xFF) ? 0xFF
 #define W6 1108
 #define W7 565
 
-void JPGReader::iDCT_row(int *D) {
+void JPGReader::iDCT_row(short *D) {
   int x0, x1, x2, x3, x4, x5, x6, x7, x8;
+
+  // Block is solid colour //
   if (!((x1 = D[4] << 11) | (x2 = D[6]) | (x3 = D[2]) | (x4 = D[1]) | (x5 = D[7]) | (x6 = D[5]) |
         (x7 = D[3]))) {
     D[0] = D[1] = D[2] = D[3] = D[4] = D[5] = D[6] = D[7] = D[0] << 3;
     return;
   }
+
   x0 = (D[0] << 11) + 128;
   x8 = W7 * (x4 + x5);
   x4 = x8 + (W1 - W7) * x4;
@@ -55,19 +58,27 @@ void JPGReader::iDCT_row(int *D) {
   D[7] = (x7 - x1) >> 8;
 }
 
-void JPGReader::iDCT_col(const int *D, unsigned char *out, int stride) {
-  int x0, x1, x2, x3, x4, x5, x6, x7, x8;
-  if (!((x1 = D[8 * 4] << 8) | (x2 = D[8 * 6]) | (x3 = D[8 * 2]) | (x4 = D[8 * 1]) | (x5 = D[8 * 7]) |
-        (x6 = D[8 * 5]) | (x7 = D[8 * 3]))) {
-    x1 = clip(((D[0] + 32) >> 6) + 128);
-    for (x0 = 8; x0; --x0) {
-      *out = (unsigned char)x1;
+void JPGReader::iDCT_col(const short *D, unsigned char *out, int stride) {
+  int x1 = ((int) D[stride * 4]) << 8;
+  int x2 = D[stride * 6];
+  int x3 = D[stride * 2];
+  int x4 = D[stride * 1];
+  int x5 = D[stride * 7];
+  int x6 = D[stride * 5];
+  int x7 = D[stride * 3];
+
+  // Block is solid colour //
+  if (!(x1 | x2 | x3 | x4 | x5 | x6 | x7)) {
+    unsigned char x0 = clip(((((int) D[0]) + 32) >> 6) + 128);
+    for (int i = 0; i < 8; ++i) {
+      *out = x0;
       out += stride;
     }
     return;
   }
-  x0 = (D[0] << 8) + 8192;
-  x8 = W7 * (x4 + x5) + 4;
+
+  int x0 = (((int) D[0]) << 8) + 8192;
+  int x8 = W7 * (x4 + x5) + 4;
   x4 = (x8 + (W1 - W7) * x4) >> 3;
   x5 = (x8 - (W1 + W7) * x5) >> 3;
   x8 = W3 * (x6 + x7) + 4;

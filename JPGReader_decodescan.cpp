@@ -22,7 +22,7 @@ void JPGReader::decodeScanCPU() {
     channel->ac_id = (pos[1] & 1) | 2;
   }
   if (pos[0] || (pos[1] != 63) || pos[2]) THROW(UNSUPPORTED_ERROR);
-  pos = m_pos = m_pos + header_len;
+  m_pos += header_len;
 
   // Iterate over blocks and decode them! //
   int restart_count = m_restart_interval;
@@ -32,14 +32,12 @@ void JPGReader::decodeScanCPU() {
   for (int tile = 0; tile < m_num_active_tiles; ++tile) {
     for (int MCU = 0; MCU < m_MCUs_per_tile && completed_MCUs < total_MCUs; ++MCU, ++completed_MCUs) {
       for (i = 0, channel = m_channels; i < m_num_channels; ++i, ++channel) {
-
         int MCU_start = (tile * MAX_PIXELS_PER_TILE) + (MCU * channel->pixels_per_MCU);
 
         for (int sample_y = 0; sample_y < channel->samples_y; ++sample_y) {
           for (int sample_x = 0; sample_x < channel->samples_x; ++sample_x) {
-
             int out_pos = MCU_start + (sample_y * channel->tile_stride * 8) + (sample_x * 8);
-            decodeBlock(channel, &channel->pixels[out_pos]);
+            decodeBlock(channel, &channel->frequencies[out_pos], &channel->pixels[out_pos]);
             if (m_error) return;
           }
         }
@@ -61,29 +59,31 @@ void JPGReader::decodeScanCPU() {
   }
 }
 
-void JPGReader::decodeBlock(ColourChannel *channel, unsigned char *out) {
-  unsigned char code = 0;
-  int coef = 0;
-  int *block = m_block_space;
-  memset(block, 0, 64 * sizeof(int));
+void JPGReader::decodeBlock(ColourChannel *channel, short *freq_out, unsigned char *pixel_out) {
+  int MCU_stride = channel->tile_stride;
+  for (int i = 0; i < 8; ++i) {
+    memset(&freq_out[i * MCU_stride], 0, 8 * sizeof(short));
+  }
 
   // Read DC value //
   channel->dc_cumulative_val += getVLC(&m_vlc_tables[channel->dc_id][0], NULL);
-  block[0] = (channel->dc_cumulative_val) * m_dq_tables[channel->dq_id][0];
+  freq_out[0] = (channel->dc_cumulative_val) * m_dq_tables[channel->dq_id][0];
+
   // Read  AC values //
+  int pos = 0;
+  unsigned char code = 0;
   do {
     int value = getVLC(&m_vlc_tables[channel->ac_id][0], &code);
     if (!code) break;  // EOB marker //
     if (!(code & 0x0F) && (code != 0xF0)) THROW(SYNTAX_ERROR);
-    coef += (code >> 4) + 1;
-    if (coef >= 64) THROW(SYNTAX_ERROR);
-    block[(int)deZigZag[coef]] = value * m_dq_tables[channel->dq_id][coef];
-    if (block[(int)deZigZag[coef]] > 0x700) printf("Lorge\n");
-  } while (coef < 63);
-  
+    pos += (code >> 4) + 1;
+    if (pos >= 64) THROW(SYNTAX_ERROR);
+    freq_out[deZigZagY[pos] * MCU_stride + deZigZagX[pos]] = value * m_dq_tables[channel->dq_id][pos];
+  } while (pos < 63);
+
   // Invert the DCT //
-  for (coef = 0; coef < 64; coef += 8) iDCT_row(&block[coef]);
-  for (coef = 0; coef < 8; ++coef) iDCT_col(&block[coef], &out[coef], channel->tile_stride);
+  for (int i = 0; i < 8; ++i) iDCT_row(&freq_out[i * MCU_stride]);
+  for (int i = 0; i < 8; ++i) iDCT_col(&freq_out[i], &pixel_out[i], MCU_stride);
 }
 
 int JPGReader::getVLC(DhtVlc *vlc_table, unsigned char *code) {

@@ -8,7 +8,6 @@
 
 #include "JPGReader_params.hpp"
 
-
 #define NO_ERROR 0
 #define SYNTAX_ERROR 1
 #define UNSUPPORTED_ERROR 2
@@ -19,7 +18,6 @@
     m_error = e; \
     return;      \
   } while (0)
-
 
 typedef struct _DhtVlc {
   unsigned char tuple, num_bits;
@@ -34,6 +32,7 @@ typedef struct _ColourChannel {
   int tile_stride, pixels_per_MCU;
   int dc_cumulative_val;
   std::vector<unsigned char> pixels;
+  std::vector<short> frequencies;
   std::string tensor_name;
 
   poplar::Tensor ipu_pixels;
@@ -42,10 +41,9 @@ typedef struct _ColourChannel {
   poplar::DataStream ipu_pixel_stream;
 } ColourChannel;
 
-
 class JPGReader {
  public:
-  JPGReader(poplar::Device& ipuDevice);
+  JPGReader(poplar::Device& ipuDevice, bool IPU_iDCT = false);
   ~JPGReader();
 
   void read(const char* filename);
@@ -56,10 +54,11 @@ class JPGReader {
   bool isGreyScale();
   bool readyToDecode();
 
-  static const ulong MAX_PIXELS_PER_TILE = 64 * 64;
+  static const ulong MAX_PIXELS_PER_TILE = 16 * 16 * 10;
 
  private:
   bool m_ready_to_decode;
+  bool m_IPU_iDCT;
 
   poplar::Graph m_ipu_graph;
   unsigned m_num_tiles;
@@ -70,7 +69,6 @@ class JPGReader {
   poplar::DataStream m_output_pixels_stream;
   int m_IPU_params_table[PARAMS_SIZE];
   poplar::Tensor m_IPU_params_tensor;
-
 
   std::vector<unsigned char> m_buf;
   unsigned char *m_pos, *m_end;
@@ -100,7 +98,7 @@ class JPGReader {
   void decodeDRI();
 
   void decodeScanCPU();
-  void decodeBlock(ColourChannel* channel, unsigned char* out);
+  void decodeBlock(ColourChannel* channel, short* freq_out, unsigned char* pixel_out);
   int getVLC(DhtVlc* vlc_table, unsigned char* code);
   int getBits(int num_bits);
   int showBits(int num_bits);
@@ -108,12 +106,14 @@ class JPGReader {
   void upsampleAndColourTransform();
   void upsampleAndColourTransformIPU();
   void upsampleChannel(ColourChannel* channel);
-  void upsampleChannelIPU(ColourChannel *channel);
-  void iDCT_row(int* D);
-  void iDCT_col(const int* D, unsigned char* out, int stride);
+  void upsampleChannelIPU(ColourChannel* channel);
+  void iDCT_row(short* D);
+  void iDCT_col(const short* D, unsigned char* out, int stride);
 };
 
-static const char deZigZag[64] = {0,  1,  8,  16, 9,  2,  3,  10, 17, 24, 32, 25, 18, 11, 4,  5,
-                                  12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6,  7,  14, 21, 28,
-                                  35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51,
-                                  58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63};
+static const int deZigZagX[64] = {0, 1, 0, 0, 1, 2, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 4, 3, 2, 1, 0, 0,
+                                   1, 2, 3, 4, 5, 6, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6, 7, 7,
+                                   6, 5, 4, 3, 2, 3, 4, 5, 6, 7, 7, 6, 5, 4, 5, 6, 7, 7, 6, 7};
+static const int deZigZagY[64] = {0, 0, 1, 2, 1, 0, 0, 1, 2, 3, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6,
+                                   5, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 7, 6, 5, 4, 3, 2, 1, 2,
+                                   3, 4, 5, 6, 7, 7, 6, 5, 4, 3, 4, 5, 6, 7, 7, 6, 5, 6, 7, 7};
