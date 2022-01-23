@@ -15,7 +15,7 @@ int main(int argc, char** argv) {
   poplar::Device ipuDevice = ipuModel.createDevice();
   poplar::Target ipuTarget = ipuDevice.getTarget();
 
-  auto reader = std::make_unique<JPGReader>(ipuDevice);
+  auto reader = std::make_unique<JPGReader>(ipuDevice, false);
   reader->read(argv[1]);
   reader->decode();
 

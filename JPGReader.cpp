@@ -4,18 +4,9 @@
 
 #include <stdexcept>
 
-#define SAFEDELETE(ptr)   \
-  do {                    \
-    if (nullptr != ptr) { \
-      delete ptr;         \
-      ptr = nullptr;      \
-    }                     \
-  } while (0)
-
-
-JPGReader::JPGReader(poplar::Device &ipuDevice, bool IPU_iDCT)
+JPGReader::JPGReader(poplar::Device &ipuDevice, bool do_iDCT_on_IPU)
     : m_ready_to_decode(false),
-      m_IPU_iDCT(IPU_iDCT),
+      m_do_iDCT_on_IPU(do_iDCT_on_IPU),
       m_ipu_graph(ipuDevice.getTarget()),
       m_num_tiles(ipuDevice.getTarget().getNumTiles()),
       m_max_pixels(m_num_tiles * MAX_PIXELS_PER_TILE),
@@ -23,74 +14,11 @@ JPGReader::JPGReader(poplar::Device &ipuDevice, bool IPU_iDCT)
       m_pixels(m_max_pixels * 3),
       m_restart_interval(0),
       m_num_bufbits(0) {
-  m_ipu_graph.addCodelets("JPGReader_codelets.gp");
-
-  m_IPU_params_tensor = m_ipu_graph.addVariable(poplar::INT, {(ulong)PARAMS_SIZE}, "params_table");
-  m_ipu_graph.setTileMapping(m_IPU_params_tensor, 0);
-  auto IPU_params_stream = m_ipu_graph.addHostToDeviceFIFO("params-stream", poplar::INT, PARAMS_SIZE);
-
   for (auto &channel : m_channels) {
     channel.pixels.resize(m_max_pixels);
     channel.frequencies.resize(m_max_pixels);
   }
-
-  // Setup Intermediate and output pixel tensors + streams
-  m_out_pixels = m_ipu_graph.addVariable(poplar::UNSIGNED_CHAR, {(ulong)m_max_pixels * 3}, "pixels");
-  m_output_pixels_stream =
-      m_ipu_graph.addDeviceToHostFIFO("pixels-stream", poplar::UNSIGNED_CHAR, m_max_pixels * 3);
-  for (int i = 0; i < 3; ++i) {
-    m_channels[i].tensor_name = "channel_0_pixels";
-    m_channels[i].stream_name = "channel_0_stream";
-    m_channels[i].tensor_name[8] += i;
-    m_channels[i].stream_name[8] += i;
-    m_channels[i].ipu_pixels =
-        m_ipu_graph.addVariable(poplar::UNSIGNED_CHAR, {(ulong)m_max_pixels}, m_channels[i].tensor_name);
-    m_channels[i].ipu_pixel_stream =
-        m_ipu_graph.addHostToDeviceFIFO(m_channels[i].stream_name, poplar::UNSIGNED_CHAR, m_max_pixels);
-  }
-
-  // Connect inputs to outputs via compute vertex, and map all over tiles
-  poplar::ComputeSet postprocess_op = m_ipu_graph.addComputeSet("postprocess");
-  for (unsigned int tile = 0; tile < m_num_tiles; ++tile) {
-    poplar::VertexRef vtx = m_ipu_graph.addVertex(postprocess_op, "Postprocess");
-    int start = tile * MAX_PIXELS_PER_TILE;
-    int end = (tile + 1) * MAX_PIXELS_PER_TILE;
-    auto Y = m_channels[0].ipu_pixels.slice(start, end);
-    auto CB = m_channels[1].ipu_pixels.slice(start, end);
-    auto CR = m_channels[2].ipu_pixels.slice(start, end);
-    auto RGB = m_out_pixels.slice(start * 3, end * 3);
-    m_ipu_graph.connect(vtx["params"], m_IPU_params_tensor);
-    m_ipu_graph.connect(vtx["Y"], Y);
-    m_ipu_graph.connect(vtx["CB"], CB);
-    m_ipu_graph.connect(vtx["CR"], CR);
-    m_ipu_graph.connect(vtx["RGB"], RGB);
-    m_ipu_graph.setTileMapping(vtx, tile);
-    m_ipu_graph.setTileMapping(Y, tile);
-    m_ipu_graph.setTileMapping(CB, tile);
-    m_ipu_graph.setTileMapping(CR, tile);
-    m_ipu_graph.setTileMapping(RGB, tile);
-
-    m_ipu_graph.setPerfEstimate(vtx, MAX_PIXELS_PER_TILE * 100);
-  }
-
-  // Create colour conversion program
-  poplar::program::Sequence ipu_postprocess_program;
-  ipu_postprocess_program.add(poplar::program::Copy(IPU_params_stream, m_IPU_params_tensor));
-  for (auto &channel : m_channels) {
-    ipu_postprocess_program.add(poplar::program::Copy(channel.ipu_pixel_stream, channel.ipu_pixels));
-  }
-  ipu_postprocess_program.add(poplar::program::Execute(postprocess_op));
-  ipu_postprocess_program.add(poplar::program::Copy(m_out_pixels, m_output_pixels_stream));
-
-  // Create poplar engine ("session"?) to execute colour program
-  m_ipuEngine = std::make_unique<poplar::Engine>(m_ipu_graph, ipu_postprocess_program);
-  m_ipuEngine->connectStream("params-stream", m_IPU_params_table);
-  m_ipuEngine->connectStream("pixels-stream", m_pixels.data());
-  for (auto &channel : m_channels) {
-    m_ipuEngine->connectStream(channel.stream_name, channel.pixels.data());
-  }
-
-  m_ipuEngine->load(ipuDevice);
+  buildIpuGraph(ipuDevice);
 };
 
 void JPGReader::read(const char *filename) {
@@ -289,7 +217,7 @@ void JPGReader::decodeSOF() {
   m_MCUs_per_tile = (m_num_MCUs_x * m_num_MCUs_y + m_num_tiles - 1) / m_num_tiles;
   m_num_active_tiles = (m_num_MCUs_x * m_num_MCUs_y + m_MCUs_per_tile - 1) / m_MCUs_per_tile;
 
-  if (m_MCU_size_x * m_MCU_size_y * m_MCUs_per_tile > (int) MAX_PIXELS_PER_TILE) {
+  if (m_MCU_size_x * m_MCU_size_y * m_MCUs_per_tile > (int)MAX_PIXELS_PER_TILE) {
     throw std::runtime_error(
         "Image too big. Increase JPGReader::MAX_PIXELS_PER_TILE. "
         "In the future trigger extra downsampling here instead of erroring.");

@@ -1,17 +1,16 @@
-TARGET   = main
-
 CFLAGS   = --std=c++14 -Wall -O3 -Wextra
 LIBS     = -lpoplar
 INCS     = -I/opt/poplar/include
+obj_files = main.o JPGReader.o upsampleColourTransform.o decodeScan.o ipuGraph.o
 
-default: main.o JPGReader.o JPGReader_UpsampleColourTransform.o JPGReader_decodescan.o
-	g++ ${CFLAGS} $^ ${INCS} ${LIBS} -o ${TARGET}
+default: ${obj_files} codelets.gp
+	g++ ${CFLAGS} ${obj_files} ${INCS} ${LIBS} -o main
 
-%.o: %.cpp JPGReader.hpp JPGReader_params.hpp
+%.o: %.cpp JPGReader.hpp codelets.hpp
 	g++ ${CFLAGS} -c $< ${INCS} ${LIBS} -o $@
 
-%.gp: %.cpp JPGReader.hpp JPGReader_params.hpp
+%.gp: %.cpp %.hpp
 	popc $< -o $@
 
 clean:
-	rm *.o ${TARGET} outfile.ppm outfile.pgm
+	rm *.o *.gp main outfile.ppm outfile.pgm

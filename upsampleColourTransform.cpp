@@ -5,9 +5,6 @@
 
 inline unsigned char clip(const int x) { return (x < 0) ? 0 : ((x > 0xFF) ? 0xFF : (unsigned char)x); }
 
-// DCT is done in place (or elsewher if specified) by doing iDCT_row on each
-// row of a block, then iDCT column on each column.
-
 // Precomputed DCT constants //
 #define W1 2841
 #define W2 2676

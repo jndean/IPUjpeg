@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "JPGReader_params.hpp"
+#include "codelets.hpp"
 
 #define NO_ERROR 0
 #define SYNTAX_ERROR 1
@@ -33,17 +33,16 @@ typedef struct _ColourChannel {
   int dc_cumulative_val;
   std::vector<unsigned char> pixels;
   std::vector<short> frequencies;
-  std::string tensor_name;
 
-  poplar::Tensor ipu_pixels;
-  std::vector<poplar::Tensor> ipu_pixel_patches;
+  std::string tensor_name;
+  poplar::Tensor data_tensor;
   std::string stream_name;
-  poplar::DataStream ipu_pixel_stream;
+  poplar::DataStream input_stream;
 } ColourChannel;
 
 class JPGReader {
  public:
-  JPGReader(poplar::Device& ipuDevice, bool IPU_iDCT = false);
+  JPGReader(poplar::Device& ipuDevice, bool do_iDCT_on_IPU = false);
   ~JPGReader();
 
   void read(const char* filename);
@@ -58,7 +57,7 @@ class JPGReader {
 
  private:
   bool m_ready_to_decode;
-  bool m_IPU_iDCT;
+  bool m_do_iDCT_on_IPU;
 
   poplar::Graph m_ipu_graph;
   unsigned m_num_tiles;
@@ -109,6 +108,8 @@ class JPGReader {
   void upsampleChannelIPU(ColourChannel* channel);
   void iDCT_row(short* D);
   void iDCT_col(const short* D, unsigned char* out, int stride);
+
+  void buildIpuGraph(poplar::Device &ipuDevice);
 };
 
 static const int deZigZagX[64] = {0, 1, 0, 0, 1, 2, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 4, 3, 2, 1, 0, 0,
