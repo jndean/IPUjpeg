@@ -4,6 +4,7 @@
 #include <poplar/Vertex.hpp>
 
 void iDCT_row(short* D);
+void iDCT_col(short *D, int stride);
 inline unsigned char clip(const int x) { return (x < 0) ? 0 : ((x > 0xFF) ? 0xFF : (unsigned char)x); }
 
 
@@ -69,21 +70,23 @@ class iDCTUpsampleColourTransform : public poplar::Vertex {
     int Y_MCU_pixels = params[param_MCU_height] * Y_stride;
     int CB_MCU_pixels = (params[param_MCU_height] >> CB_downshift_y) * CB_stride;
     int CR_MCU_pixels = (params[param_MCU_height] >> CR_downshift_y) * CR_stride;
+    int MCUs_per_tile = params[param_MCUs_per_tile];
 
     // Do iDCT //
-    /*
-    for (int MCU = 0; MCU < params[param_MCUs_per_tile]; ++MCU) {
-      short *Y_MCU = &Y[MCU * Y_MCU_pixels];
-      short *CB_MCU = &CB[MCU * CB_MCU_pixels];
-      short *CR_MCU = &CR[MCU * CR_MCU_pixels];
-      for (int row = 0; row < 8; row++){
-        iDCT_row(&Y_MCU[row * Y_stride]);
-        iDCT_row(&CB_MCU[row * CB_stride]);
-        iDCT_row(&CR_MCU[row * CR_stride]);
-      }
+    for (int pos = 0; pos < MCUs_per_tile * Y_MCU_pixels; pos += 8) iDCT_row(&Y[pos]);
+    for (int pos = 0; pos < MCUs_per_tile * CB_MCU_pixels; pos += 8) iDCT_row(&CB[pos]);
+    for (int pos = 0; pos < MCUs_per_tile * CR_MCU_pixels; pos += 8) iDCT_row(&CR[pos]);
+    
+    for (int pos = 0; pos < params[param_MCUs_per_tile] * Y_MCU_pixels; pos += 8 * Y_stride) {
+      for (int col = 0; col < Y_stride; ++col) iDCT_col(&Y[pos + col], Y_stride);
     }
-    */
-
+    for (int pos = 0; pos < params[param_MCUs_per_tile] * CB_MCU_pixels; pos += 8 * CB_stride) {
+      for (int col = 0; col < CB_stride; ++col) iDCT_col(&CB[pos + col], CB_stride);
+    }
+    for (int pos = 0; pos < params[param_MCUs_per_tile] * CR_MCU_pixels; pos += 8 * CR_stride) {
+      for (int col = 0; col < CR_stride; ++col) iDCT_col(&CR[pos + col], CR_stride);
+    }
+    
     // To fused upscale and YCbCr->RGB colour transform //
     for (int Y_y = 0; Y_y < params[param_MCUs_per_tile] * params[param_MCU_height]; Y_y++) {
       short* CB_row = &CB[(Y_y >> CB_downshift_y) * CB_stride];
@@ -155,4 +158,56 @@ void iDCT_row(short* D) {
   D[5] = (x0 - x4) >> 8;
   D[6] = (x3 - x2) >> 8;
   D[7] = (x7 - x1) >> 8;
+}
+
+
+void iDCT_col(short *D, int stride) {
+  int x1 = ((int) D[stride * 4]) << 8;
+  int x2 = D[stride * 6];
+  int x3 = D[stride * 2];
+  int x4 = D[stride * 1];
+  int x5 = D[stride * 7];
+  int x6 = D[stride * 5];
+  int x7 = D[stride * 3];
+
+  // Block is solid colour //
+  if (!(x1 | x2 | x3 | x4 | x5 | x6 | x7)) {
+    unsigned char x0 = clip(((((int) D[0]) + 32) >> 6) + 128);
+    for (int i = 0; i < 8; ++i) {
+      D[i * stride] = x0;
+    }
+    return;
+  }
+
+  int x0 = (((int) D[0]) << 8) + 8192;
+  int x8 = W7 * (x4 + x5) + 4;
+  x4 = (x8 + (W1 - W7) * x4) >> 3;
+  x5 = (x8 - (W1 + W7) * x5) >> 3;
+  x8 = W3 * (x6 + x7) + 4;
+  x6 = (x8 - (W3 - W5) * x6) >> 3;
+  x7 = (x8 - (W3 + W5) * x7) >> 3;
+  x8 = x0 + x1;
+  x0 -= x1;
+  x1 = W6 * (x3 + x2) + 4;
+  x2 = (x1 - (W2 + W6) * x2) >> 3;
+  x3 = (x1 + (W2 - W6) * x3) >> 3;
+  x1 = x4 + x6;
+  x4 -= x6;
+  x6 = x5 + x7;
+  x5 -= x7;
+  x7 = x8 + x3;
+  x8 -= x3;
+  x3 = x0 + x2;
+  x0 -= x2;
+  x2 = (181 * (x4 + x5) + 128) >> 8;
+  x4 = (181 * (x4 - x5) + 128) >> 8;
+
+  D[stride * 0] = clip(((x7 + x1) >> 14) + 128);
+  D[stride * 1] = clip(((x3 + x2) >> 14) + 128);
+  D[stride * 2] = clip(((x0 + x4) >> 14) + 128);
+  D[stride * 3] = clip(((x8 + x6) >> 14) + 128);
+  D[stride * 4] = clip(((x8 - x6) >> 14) + 128);
+  D[stride * 5] = clip(((x0 - x4) >> 14) + 128);
+  D[stride * 6] = clip(((x3 - x2) >> 14) + 128);
+  D[stride * 7] = clip(((x7 - x1) >> 14) + 128);
 }

@@ -6,72 +6,6 @@
 #include "JPGReader.hpp"
 
 
-inline unsigned char tmpclip(const int x) { return (x < 0) ? 0 : ((x > 0xFF) ? 0xFF : (unsigned char)x); }
-#define W1 2841
-#define W2 2676
-#define W3 2408
-#define W5 1609
-#define W6 1108
-#define W7 565
-void tmp_iDCT_col(const short *D, short *out, int stride) {
-  int x1 = ((int) D[stride * 4]) << 8;
-  int x2 = D[stride * 6];
-  int x3 = D[stride * 2];
-  int x4 = D[stride * 1];
-  int x5 = D[stride * 7];
-  int x6 = D[stride * 5];
-  int x7 = D[stride * 3];
-
-  // Block is solid colour //
-  if (!(x1 | x2 | x3 | x4 | x5 | x6 | x7)) {
-    unsigned char x0 = tmpclip(((((int) D[0]) + 32) >> 6) + 128);
-    for (int i = 0; i < 8; ++i) {
-      *out = x0;
-      out += stride;
-    }
-    return;
-  }
-
-  int x0 = (((int) D[0]) << 8) + 8192;
-  int x8 = W7 * (x4 + x5) + 4;
-  x4 = (x8 + (W1 - W7) * x4) >> 3;
-  x5 = (x8 - (W1 + W7) * x5) >> 3;
-  x8 = W3 * (x6 + x7) + 4;
-  x6 = (x8 - (W3 - W5) * x6) >> 3;
-  x7 = (x8 - (W3 + W5) * x7) >> 3;
-  x8 = x0 + x1;
-  x0 -= x1;
-  x1 = W6 * (x3 + x2) + 4;
-  x2 = (x1 - (W2 + W6) * x2) >> 3;
-  x3 = (x1 + (W2 - W6) * x3) >> 3;
-  x1 = x4 + x6;
-  x4 -= x6;
-  x6 = x5 + x7;
-  x5 -= x7;
-  x7 = x8 + x3;
-  x8 -= x3;
-  x3 = x0 + x2;
-  x0 -= x2;
-  x2 = (181 * (x4 + x5) + 128) >> 8;
-  x4 = (181 * (x4 - x5) + 128) >> 8;
-  *out = tmpclip(((x7 + x1) >> 14) + 128);
-  out += stride;
-  *out = tmpclip(((x3 + x2) >> 14) + 128);
-  out += stride;
-  *out = tmpclip(((x0 + x4) >> 14) + 128);
-  out += stride;
-  *out = tmpclip(((x8 + x6) >> 14) + 128);
-  out += stride;
-  *out = tmpclip(((x8 - x6) >> 14) + 128);
-  out += stride;
-  *out = tmpclip(((x0 - x4) >> 14) + 128);
-  out += stride;
-  *out = tmpclip(((x3 - x2) >> 14) + 128);
-  out += stride;
-  *out = tmpclip(((x7 - x1) >> 14) + 128);
-}
-
-
 void JPGReader::decodeScanCPU() {
   unsigned char *pos = m_pos;
   unsigned int header_len = read16(pos);
@@ -152,9 +86,6 @@ void JPGReader::decodeBlock(ColourChannel *channel, short *freq_out, unsigned ch
   if (!m_do_iDCT_on_IPU) {
     for (int i = 0; i < 8; ++i) iDCT_row(&freq_out[i * MCU_stride]);
     for (int i = 0; i < 8; ++i) iDCT_col(&freq_out[i], &pixel_out[i], MCU_stride);
-  } else {
-    for (int i = 0; i < 8; ++i) iDCT_row(&freq_out[i * MCU_stride]);
-    for (int i = 0; i < 8; ++i) tmp_iDCT_col(&freq_out[i], &freq_out[i], MCU_stride);
   }
 }
 
