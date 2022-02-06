@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include <chrono>
+#include <numeric>
 #include <stdexcept>
 
 JPGReader::JPGReader(poplar::Device &ipuDevice, bool do_iDCT_on_IPU)
@@ -54,17 +56,19 @@ FAILURE:
 
 void JPGReader::flush() {
   m_ready_to_decode = false;
-  m_error = NO_ERROR;
-  m_restart_interval = 0;
-  m_num_bufbits = 0;
   m_buf.clear();
 }
 
 JPGReader::~JPGReader() { flush(); }
 
 int JPGReader::decode() {
-  if (!m_ready_to_decode) throw std::runtime_error(".read() not called before .decode()");
-  m_ready_to_decode = false;
+  if (!m_ready_to_decode) {
+    throw std::runtime_error(".read() not called before .decode()");
+  }
+  m_error = NO_ERROR;
+  m_restart_interval = 0;
+  m_num_bufbits = 0;
+  auto start_time = std::chrono::high_resolution_clock::now();
 
   // Main format block parsing loop //
   while (!m_error) {
@@ -77,31 +81,31 @@ int JPGReader::decode() {
       break;
     }
     m_pos += 2;
-    // printf("m_pos=%d, val = 0x(FF)%x\n", m_pos - m_buf.data(), m_pos[-1]);
+
     switch (m_pos[-1]) {
       case 0xC0:
-        decodeSOF();
+        callAndTime(&JPGReader::decodeSOF, "decodeSOF");
         break;
       case 0xC4:
-        decodeDHT();
+        callAndTime(&JPGReader::decodeDHT, "decodeDHT");
         break;
       case 0xDB:
-        decodeDQT();
+        callAndTime(&JPGReader::decodeDQT, "decodeDQT");
         break;
       case 0xDD:
-        decodeDRI();
+        callAndTime(&JPGReader::decodeDRI, "decodeDRI");
         break;
       case 0xDA:
-        decodeScanCPU();
+        callAndTime(&JPGReader::decodeScanCPU, "decodeScanCPU");
         break;
       case 0xFE:
-        skipBlock();
+        callAndTime(&JPGReader::skipBlock, "skipBlock");
         break;
       case 0xD9:
         break;
       default:
         if ((m_pos[-1] & 0xF0) == 0xE0) {
-          skipBlock();
+          callAndTime(&JPGReader::skipBlock, "skipBlock");
         } else {
           m_error = SYNTAX_ERROR;
         }
@@ -109,7 +113,7 @@ int JPGReader::decode() {
 
     // Finished //
     if (m_pos[-1] == 0xD9 && m_pos == m_end) {
-      upsampleAndColourTransformIPU();
+      callAndTime(&JPGReader::upsampleAndColourTransformIPU, "upsampleAndColourTransformIPU");
       break;
     }
   }
@@ -117,6 +121,12 @@ int JPGReader::decode() {
   if (m_error) {
     fprintf(stderr, "Decode failed with error code %d\n", m_error);
     return m_error;
+  }
+
+  if (TIMINGSTATS) {
+    auto elapsed = std::chrono::high_resolution_clock::now() - start_time;
+    auto dt = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
+    timings["decode"].push_back(dt);
   }
 
   return NO_ERROR;
@@ -307,3 +317,35 @@ void JPGReader::decodeDQT() {
 }
 
 bool JPGReader::isGreyScale() { return m_num_channels == 1; }
+bool JPGReader::isReadyToDecode() { return m_ready_to_decode; }
+
+// ----------------- Utilities for timing (profiling) ------------------------ //
+
+void JPGReader::callAndTime(void (JPGReader::*method)(), const std::string name) {
+  if (TIMINGSTATS) {
+    auto t = std::chrono::high_resolution_clock::now();
+    (this->*method)();
+    auto elapsed = std::chrono::high_resolution_clock::now() - t;
+    long long microseconds = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
+    timings[name].push_back(microseconds);
+  } else {
+    (this->*method)();
+  }
+}
+
+void JPGReader::printTimingStats() {
+  printf(
+      "+-------------------------------+-----------+\n"
+      "|                        Method | Time (ms) |\n"
+      "+-------------------------------+-----------+\n");
+  for (const auto &item : timings) {
+    double total_microseconds = std::accumulate(item.second.begin(), item.second.end(), 0.);
+    double avg_milliseconds = total_microseconds / (1000. * item.second.size());
+    if (avg_milliseconds > 0.005) {
+      printf("|%30s | % 9.3f |\n", item.first.c_str(), avg_milliseconds);
+    } else {
+      printf("|%30s |         - |\n", item.first.c_str());
+    }
+  }
+  printf("+-------------------------------+-----------+\n");
+}

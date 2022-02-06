@@ -1,6 +1,6 @@
 
-make && \
-\
+make clean
+make OVERRIDE='TIMINGSTATS=0' && \
 for img in imgs/*.jpg
 do
     ./main $img

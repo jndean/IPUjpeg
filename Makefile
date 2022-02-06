@@ -1,4 +1,7 @@
-CFLAGS   = --std=c++14 -Wall -O3 -Wextra
+
+OVERRIDE := NOOVERRIDES
+
+CFLAGS   = --std=c++14 -Wall -O3 -Wextra -D ${OVERRIDE}
 LIBS     = -lpoplar
 INCS     = -I/opt/poplar/include
 obj_files = main.o JPGReader.o upsampleColourTransform.o decodeScan.o ipuGraph.o

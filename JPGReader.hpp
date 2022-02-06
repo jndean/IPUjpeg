@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <memory>
 #include <poplar/Engine.hpp>
 #include <poplar/Graph.hpp>
@@ -7,6 +8,11 @@
 #include <vector>
 
 #include "codelets.hpp"
+
+#ifndef TIMINGSTATS
+#define TIMINGSTATS 1
+#endif
+
 
 #define NO_ERROR 0
 #define SYNTAX_ERROR 1
@@ -42,6 +48,8 @@ typedef struct _ColourChannel {
 
 class JPGReader {
  public:
+  static const ulong MAX_PIXELS_PER_TILE = 16 * 16 * 10;
+
   JPGReader(poplar::Device& ipuDevice, bool do_iDCT_on_IPU = false);
   ~JPGReader();
 
@@ -51,9 +59,10 @@ class JPGReader {
   void flush();
 
   bool isGreyScale();
-  bool readyToDecode();
+  bool isReadyToDecode();
+  void printTimingStats();
 
-  static const ulong MAX_PIXELS_PER_TILE = 16 * 16 * 10;
+  std::map<std::string, std::vector<long>> timings;
 
  private:
   bool m_ready_to_decode;
@@ -88,6 +97,7 @@ class JPGReader {
   unsigned char m_num_bufbits;
   int m_block_space[64];
 
+
   unsigned short read16(const unsigned char* pos);
 
   void skipBlock();
@@ -109,12 +119,14 @@ class JPGReader {
   void iDCT_row(short* D);
   void iDCT_col(const short* D, unsigned char* out, int stride);
 
-  void buildIpuGraph(poplar::Device &ipuDevice);
+  void buildIpuGraph(poplar::Device& ipuDevice);
+
+  void callAndTime(void (JPGReader::*method)(), const std::string name);
 };
 
 static const int deZigZagX[64] = {0, 1, 0, 0, 1, 2, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 4, 3, 2, 1, 0, 0,
-                                   1, 2, 3, 4, 5, 6, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6, 7, 7,
-                                   6, 5, 4, 3, 2, 3, 4, 5, 6, 7, 7, 6, 5, 4, 5, 6, 7, 7, 6, 7};
+                                  1, 2, 3, 4, 5, 6, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6, 7, 7,
+                                  6, 5, 4, 3, 2, 3, 4, 5, 6, 7, 7, 6, 5, 4, 5, 6, 7, 7, 6, 7};
 static const int deZigZagY[64] = {0, 0, 1, 2, 1, 0, 0, 1, 2, 3, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6,
-                                   5, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 7, 6, 5, 4, 3, 2, 1, 2,
-                                   3, 4, 5, 6, 7, 7, 6, 5, 4, 3, 4, 5, 6, 7, 7, 6, 5, 6, 7, 7};
+                                  5, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 7, 6, 5, 4, 3, 2, 1, 2,
+                                  3, 4, 5, 6, 7, 7, 6, 5, 4, 3, 4, 5, 6, 7, 7, 6, 5, 6, 7, 7};

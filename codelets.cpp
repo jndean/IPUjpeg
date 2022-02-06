@@ -76,7 +76,7 @@ class iDCTUpsampleColourTransform : public poplar::Vertex {
     for (int pos = 0; pos < MCUs_per_tile * Y_MCU_pixels; pos += 8) iDCT_row(&Y[pos]);
     for (int pos = 0; pos < MCUs_per_tile * CB_MCU_pixels; pos += 8) iDCT_row(&CB[pos]);
     for (int pos = 0; pos < MCUs_per_tile * CR_MCU_pixels; pos += 8) iDCT_row(&CR[pos]);
-    
+
     for (int pos = 0; pos < params[param_MCUs_per_tile] * Y_MCU_pixels; pos += 8 * Y_stride) {
       for (int col = 0; col < Y_stride; ++col) iDCT_col(&Y[pos + col], Y_stride);
     }
@@ -87,7 +87,7 @@ class iDCTUpsampleColourTransform : public poplar::Vertex {
       for (int col = 0; col < CR_stride; ++col) iDCT_col(&CR[pos + col], CR_stride);
     }
     
-    // To fused upscale and YCbCr->RGB colour transform //
+    // Do fused upscale and YCbCr->RGB colour transform //
     for (int Y_y = 0; Y_y < params[param_MCUs_per_tile] * params[param_MCU_height]; Y_y++) {
       short* CB_row = &CB[(Y_y >> CB_downshift_y) * CB_stride];
       short* CR_row = &CR[(Y_y >> CR_downshift_y) * CR_stride];
