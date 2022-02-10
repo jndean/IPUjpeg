@@ -10,7 +10,7 @@ JPGReader::JPGReader(poplar::Device &ipuDevice, bool do_iDCT_on_IPU)
     : m_ready_to_decode(false),
       m_do_iDCT_on_IPU(do_iDCT_on_IPU),
       m_ipu_graph(ipuDevice.getTarget()),
-      m_num_tiles(ipuDevice.getTarget().getNumTiles()),
+      m_num_tiles(ipuDevice.getTarget().getNumTiles() * THREADS_PER_TILE),
       m_max_pixels(m_num_tiles * MAX_PIXELS_PER_TILE),
       m_error(NO_ERROR),
       m_pixels(m_max_pixels * 3),

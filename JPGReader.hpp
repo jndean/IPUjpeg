@@ -48,7 +48,8 @@ typedef struct _ColourChannel {
 
 class JPGReader {
  public:
-  static const ulong MAX_PIXELS_PER_TILE = 16 * 16 * 10;
+  static const ulong MAX_PIXELS_PER_TILE = 16 * 16;
+  static const ulong THREADS_PER_TILE = 6;
 
   JPGReader(poplar::Device& ipuDevice, bool do_iDCT_on_IPU = false);
   ~JPGReader();

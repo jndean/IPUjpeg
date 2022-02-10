@@ -173,6 +173,7 @@ void JPGReader::upsampleAndColourTransformIPU() {
     m_IPU_params_table[param_CB_downshift_y] = m_channels[1].downshift_y;
     m_IPU_params_table[param_CR_downshift_x] = m_channels[2].downshift_x;
     m_IPU_params_table[param_CR_downshift_y] = m_channels[2].downshift_y;
+    m_IPU_params_table[param_num_channels] = m_num_channels;
 
     m_ipuEngine->run(0);
   }

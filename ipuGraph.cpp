@@ -1,6 +1,7 @@
 
 
 #include "JPGReader.hpp"
+#include <poputil/VertexTemplates.hpp>
 
 void JPGReader::buildIpuGraph(poplar::Device &ipuDevice) {
   m_ipu_graph.addCodelets("codelets.gp");
@@ -27,11 +28,16 @@ void JPGReader::buildIpuGraph(poplar::Device &ipuDevice) {
 
   // Connect inputs to outputs via compute vertex, and map all over tiles
   poplar::ComputeSet postprocess_op = m_ipu_graph.addComputeSet("postprocess");
-  const char *vertexClass = (m_do_iDCT_on_IPU ? "iDCTUpsampleColourTransform" : "UpsampleColourTransform");
-  for (unsigned int tile = 0; tile < m_num_tiles; ++tile) {
+  const auto vertexClass = poputil::templateVertex(
+    "postProcessColour", 
+    m_do_iDCT_on_IPU ? "true" : "false", 
+    m_do_iDCT_on_IPU ? "short" : "unsigned char"
+  );
+  for (unsigned int virtual_tile = 0; virtual_tile < m_num_tiles; ++virtual_tile) {
+    int physical_tile = virtual_tile / THREADS_PER_TILE;
     poplar::VertexRef vtx = m_ipu_graph.addVertex(postprocess_op, vertexClass);
-    int start = tile * MAX_PIXELS_PER_TILE;
-    int end = (tile + 1) * MAX_PIXELS_PER_TILE;
+    int start = virtual_tile * MAX_PIXELS_PER_TILE;
+    int end = (virtual_tile + 1) * MAX_PIXELS_PER_TILE;
     auto Y = m_channels[0].data_tensor.slice(start, end);
     auto CB = m_channels[1].data_tensor.slice(start, end);
     auto CR = m_channels[2].data_tensor.slice(start, end);
@@ -41,13 +47,13 @@ void JPGReader::buildIpuGraph(poplar::Device &ipuDevice) {
     m_ipu_graph.connect(vtx["CB"], CB);
     m_ipu_graph.connect(vtx["CR"], CR);
     m_ipu_graph.connect(vtx["RGB"], RGB);
-    m_ipu_graph.setTileMapping(vtx, tile);
-    m_ipu_graph.setTileMapping(Y, tile);
-    m_ipu_graph.setTileMapping(CB, tile);
-    m_ipu_graph.setTileMapping(CR, tile);
-    m_ipu_graph.setTileMapping(RGB, tile);
+    m_ipu_graph.setTileMapping(vtx, physical_tile);
+    m_ipu_graph.setTileMapping(Y, physical_tile);
+    m_ipu_graph.setTileMapping(CB, physical_tile);
+    m_ipu_graph.setTileMapping(CR, physical_tile);
+    m_ipu_graph.setTileMapping(RGB, physical_tile);
 
-    m_ipu_graph.setPerfEstimate(vtx, MAX_PIXELS_PER_TILE * 500);
+    m_ipu_graph.setPerfEstimate(vtx, MAX_PIXELS_PER_TILE * 1000);
   }
 
   // Create colour conversion program

@@ -9,6 +9,7 @@ enum param: int {
     param_CB_downshift_y,
     param_CR_downshift_x,
     param_CR_downshift_y,
+    param_num_channels,
 
     PARAMS_SIZE  // enum measures its own size
 };
