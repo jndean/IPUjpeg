@@ -1,9 +1,14 @@
+#include <algorithm>
 #include <stdlib.h>
 
+#include <poplar/DeviceManager.hpp>
 #include <poplar/Engine.hpp>
 #include <poplar/IPUModel.hpp>
 
 #include "JPGReader.hpp"
+
+poplar::Device getIPU(bool use_hardware = true, int num_ipus = 1);
+
 
 int main(int argc, char** argv) {
   if (argc != 2) {
@@ -11,9 +16,7 @@ int main(int argc, char** argv) {
     return EXIT_FAILURE;
   }
 
-  poplar::IPUModel ipuModel;
-  poplar::Device ipuDevice = ipuModel.createDevice();
-  poplar::Target ipuTarget = ipuDevice.getTarget();
+  auto ipuDevice = getIPU(true);
 
   const char* filename = argv[1];
   auto reader = std::make_unique<JPGReader>(ipuDevice, true);
@@ -36,4 +39,25 @@ int main(int argc, char** argv) {
   }
 
   return EXIT_SUCCESS;
+}
+
+poplar::Device getIPU(bool use_hardware, int num_ipus) {
+
+  if (use_hardware) {
+auto manager = poplar::DeviceManager::createDeviceManager();
+    auto devices = manager.getDevices(poplar::TargetType::IPU, num_ipus);
+    auto it = std::find_if(devices.begin(), devices.end(), [](poplar::Device &device) {
+	return device.attach();
+      });
+    if (it == devices.end()) {
+      std::cerr << "Error attaching to device\n";
+      exit(EXIT_FAILURE);
+    }
+    std::cout << "Attached to IPU " << it->getId() << std::endl;
+    return std::move(*it);
+    
+  } else {
+    poplar::IPUModel ipuModel;
+    return ipuModel.createDevice(); 
+  }
 }
