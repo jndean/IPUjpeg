@@ -2,10 +2,33 @@
 
 #include <string.h>
 
+#include <chrono>
+#include <numeric>
 #include <stdexcept>
 
-CPUReader::CPUReader(const char *filename)
-    : m_error(NO_ERROR), m_pixels(nullptr), m_restart_interval(0), m_num_bufbits(0) {
+#define SAFEDELETE(ptr)   \
+  do {                    \
+    if (nullptr != ptr) { \
+      delete ptr;         \
+      ptr = nullptr;      \
+    }                     \
+  } while (0)
+
+CPUReader::CPUReader()
+    : m_ready_to_decode(false),
+      m_buf(nullptr),
+      m_error(NO_ERROR),
+      m_pixels(nullptr),
+      m_restart_interval(0),
+      m_num_bufbits(0) {
+  for (auto &channel : m_channels) {
+    channel.pixels = nullptr;
+  }
+}
+
+void CPUReader::read(const char *filename) {
+  if (m_ready_to_decode) flush();
+
   FILE *f = NULL;
   f = fopen(filename, "r");
   if (NULL == f) goto FAILURE;
@@ -27,25 +50,39 @@ CPUReader::CPUReader(const char *filename)
   m_end = m_buf + m_size;
   m_pos = m_buf + 2;
 
-  for (int i = 0; i < 3; ++i) m_channels[i].pixels = NULL;
+  m_ready_to_decode = true;
   return;
 
 FAILURE:
   if (NULL != f) fclose(f);
-  if (NULL != m_buf) delete m_buf;
+  SAFEDELETE(m_buf);
   throw std::runtime_error("Failed to create jpg reader");
 }
 
-CPUReader::~CPUReader() {
-  delete m_buf;
-  int i;
-  ColourChannel *c;
-  for (i = 0, c = m_channels; i < 3; i++, c++)
-    if (c->pixels) delete c->pixels;
-  if (m_pixels) delete m_pixels;
+void CPUReader::flush() {
+  SAFEDELETE(m_buf);
+  for (auto &channel : m_channels) SAFEDELETE(channel.pixels);
+  SAFEDELETE(m_pixels);
+  m_ready_to_decode = false;
 }
 
+CPUReader::~CPUReader() { flush(); }
+
 int CPUReader::decode() {
+  if (!m_ready_to_decode) {
+    throw std::runtime_error(".read() not called before .decode()");
+  }
+  // Reset state in case we've already called decode since calling read (e.g. profiling)
+  for (auto &channel : m_channels) {
+    SAFEDELETE(channel.pixels);
+  }
+  SAFEDELETE(m_pixels);
+  m_error = NO_ERROR;
+  m_restart_interval = 0;
+  m_num_bufbits = 0;
+
+  auto start_time = std::chrono::high_resolution_clock::now();
+
   // Main format block parsing loop //
   while (!m_error) {
     if (m_pos > m_end - 2) {
@@ -59,35 +96,35 @@ int CPUReader::decode() {
     m_pos += 2;
     switch (m_pos[-1]) {
       case 0xC0:
-        decodeSOF();
+        callAndTime(&CPUReader::decodeSOF, "decodeSOF");
         break;
       case 0xC4:
-        decodeDHT();
+        callAndTime(&CPUReader::decodeDHT, "decodeDHT");
         break;
       case 0xDB:
-        decodeDQT();
+        callAndTime(&CPUReader::decodeDQT, "decodeDQT");
         break;
       case 0xDD:
-        decodeDRI();
+        callAndTime(&CPUReader::decodeDRI, "decodeDRI");
         break;
       case 0xDA:
-        decodeScanCPU();
+        callAndTime(&CPUReader::decodeScanCPU, "decodeScanCPU");
         break;
       case 0xFE:
-        skipBlock();
+        callAndTime(&CPUReader::skipBlock, "skipBlock");
         break;
       case 0xD9:
         break;
       default:
         if ((m_pos[-1] & 0xF0) == 0xE0)
-          skipBlock();
+          callAndTime(&CPUReader::skipBlock, "skipBlock");
         else
           m_error = SYNTAX_ERROR;
     }
 
     // Finished //
     if (m_pos[-1] == 0xD9 && m_pos == m_end) {
-      upsampleAndColourTransform();
+      callAndTime(&CPUReader::upsampleAndColourTransform, "upsampleAndColourTransform");
       break;
     }
   }
@@ -95,6 +132,12 @@ int CPUReader::decode() {
   if (m_error) {
     fprintf(stderr, "Decode failed with error code %d\n", m_error);
     return m_error;
+  }
+
+  if (TIMINGSTATS) {
+    auto elapsed = std::chrono::high_resolution_clock::now() - start_time;
+    auto dt = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
+    timings["decode"].push_back(dt);
   }
 
   return NO_ERROR;
@@ -245,3 +288,34 @@ void CPUReader::decodeDQT() {
 }
 
 bool CPUReader::isGreyScale() { return m_num_channels == 1; }
+
+// ----------------- Utilities for timing (profiling) ------------------------ //
+
+void CPUReader::callAndTime(void (CPUReader::*method)(), const std::string name) {
+  if (TIMINGSTATS) {
+    auto t = std::chrono::high_resolution_clock::now();
+    (this->*method)();
+    auto elapsed = std::chrono::high_resolution_clock::now() - t;
+    long long microseconds = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
+    timings[name].push_back(microseconds);
+  } else {
+    (this->*method)();
+  }
+}
+
+void CPUReader::printTimingStats() {
+  printf(
+      "+-------------------------------+-----------+\n"
+      "|                        Method | Time (ms) |\n"
+      "+-------------------------------+-----------+\n");
+  for (const auto &item : timings) {
+    double total_microseconds = std::accumulate(item.second.begin(), item.second.end(), 0.);
+    double avg_milliseconds = total_microseconds / (1000. * item.second.size());
+    if (avg_milliseconds > 0.005) {
+      printf("|%30s | % 9.3f |\n", item.first.c_str(), avg_milliseconds);
+    } else {
+      printf("|%30s |         - |\n", item.first.c_str());
+    }
+  }
+  printf("+-------------------------------+-----------+\n");
+}

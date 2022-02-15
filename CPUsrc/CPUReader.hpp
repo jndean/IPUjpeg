@@ -1,6 +1,12 @@
 #pragma once
 
+#include <map>
 #include <vector>
+
+#ifndef TIMINGSTATS
+#define TIMINGSTATS 1
+#endif
+
 
 #define NO_ERROR 0
 #define SYNTAX_ERROR 1
@@ -30,6 +36,7 @@ typedef struct _ColourChannel
 class CPUReader
 {
 private:
+    bool m_ready_to_decode;
     unsigned char *m_buf, *m_pos, *m_end;
     unsigned int m_size;
     unsigned short m_width, m_height;
@@ -65,13 +72,20 @@ private:
     void iDCT_row(int* D);
     void iDCT_col(const int* D, unsigned char *out, int stride);
 
+    void callAndTime(void (CPUReader::*method)(), const std::string name);
+
 public:
-    CPUReader(const char* filename);
+    CPUReader();
     ~CPUReader();
 
+    void read(const char* filename);
     int decode();
     void write(const char* filename);
+    void flush();
     bool isGreyScale();
+
+    void printTimingStats();
+    std::map<std::string, std::vector<long>> timings;
 
 };
 

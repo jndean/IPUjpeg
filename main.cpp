@@ -16,22 +16,22 @@ int main(int argc, char** argv) {
     return EXIT_FAILURE;
   }
 
-  auto ipuDevice = getIPU(true);
+  auto ipuDevice = getIPU(false);
 
   const char* filename = argv[1];
-  auto reader = std::make_unique<JPGReader>(ipuDevice, true);
+  auto reader = std::make_unique<JPGReader>(ipuDevice, false);
   reader->read(filename);
   reader->decode();
   reader->write(reader->isGreyScale() ? "outfile.pgm" : "outfile.ppm");
 
   if (TIMINGSTATS) {
     // Warmup
-    for (auto i = 0; i < 5; ++i) {
+    for (auto i = 0; i < 20; ++i) {
       reader->read(filename);
       reader->decode();
     }
     reader->timings.clear();
-    for (auto i = 0; i < 50; ++i) {
+    for (auto i = 0; i < 100; ++i) {
       reader->read(filename);
       reader->decode();
     }

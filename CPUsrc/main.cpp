@@ -11,10 +11,25 @@ int main(int argc, char** argv) {
     return EXIT_FAILURE;
   }
 
-  auto reader = std::make_unique<CPUReader>(argv[1]);
+  const char* filename = argv[1];
+  auto reader = std::make_unique<CPUReader>();
+  reader->read(filename);
   reader->decode();
-  const char* outname = reader->isGreyScale() ? "outfile.pgm" : "outfile.ppm";
-  reader->write(outname);
+  reader->write(reader->isGreyScale() ? "outfile.pgm" : "outfile.ppm");
+
+  if (TIMINGSTATS) {
+    // Warmup
+    for (auto i = 0; i < 20; ++i) {
+      reader->read(filename);
+      reader->decode();
+    }
+    reader->timings.clear();
+    for (auto i = 0; i < 100; ++i) {
+      reader->read(filename);
+      reader->decode();
+    }
+    reader->printTimingStats();
+  }
 
   return EXIT_SUCCESS;
 }
