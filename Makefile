@@ -16,4 +16,4 @@ default: ${obj_files} codelets.gp
 	popc $< -o $@
 
 clean:
-	rm *.o *.gp main outfile.ppm outfile.pgm
+	rm *.o *.gp main outfile.ppm

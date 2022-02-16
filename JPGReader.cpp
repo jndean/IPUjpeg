@@ -138,11 +138,11 @@ void JPGReader::write(const char *filename) {
     printf("Couldn't open output file %s\n", filename);
     return;
   }
-  fprintf(f, "P%d\n%d %d\n255\n", (m_num_channels > 1) ? 6 : 5, m_width, m_height);
+  fprintf(f, "P%d\n%d %d\n255\n", 6, m_width, m_height);
 
   // Linearise pixels //
   std::vector<unsigned char> outbuf(m_width * m_height * 3);
-  unsigned char *inbuf = (m_num_channels == 1) ? m_channels[0].pixels.data() : m_pixels.data();
+  unsigned char *inbuf = m_pixels.data();
   int out_MCU_x = 0, out_MCU_y = 0;
   for (int tile = 0; tile < m_num_active_tiles; tile++) {
     for (int in_MCU = 0; in_MCU < m_MCUs_per_tile; ++in_MCU) {
@@ -156,8 +156,8 @@ void JPGReader::write(const char *filename) {
         for (int x = 0; x < out_width; ++x) {
           int in_pixel = in_start + y * m_MCU_size_x + x;
           int out_pixel = out_start + y * m_width + x;
-          for (int c = 0; c < m_num_channels; ++c) {
-            outbuf[out_pixel * m_num_channels + c] = inbuf[in_pixel * m_num_channels + c];
+          for (int c = 0; c < 3; ++c) {
+            outbuf[out_pixel * 3 + c] = inbuf[in_pixel * 3 + c];
           }
         }
       }
@@ -169,7 +169,7 @@ void JPGReader::write(const char *filename) {
     }
   }
 
-  fwrite(outbuf.data(), sizeof(unsigned char), m_width * m_height * m_num_channels, f);
+  fwrite(outbuf.data(), sizeof(unsigned char), m_width * m_height * 3, f);
   fclose(f);
 }
 

@@ -19,10 +19,10 @@ int main(int argc, char** argv) {
   auto ipuDevice = getIPU(false);
 
   const char* filename = argv[1];
-  auto reader = std::make_unique<JPGReader>(ipuDevice, false);
+  auto reader = std::make_unique<JPGReader>(ipuDevice, true);
   reader->read(filename);
   reader->decode();
-  reader->write(reader->isGreyScale() ? "outfile.pgm" : "outfile.ppm");
+  reader->write("outfile.ppm");
 
   if (TIMINGSTATS) {
     // Warmup

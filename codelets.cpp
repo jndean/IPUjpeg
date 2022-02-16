@@ -9,8 +9,7 @@ void iDCT(short* data, int pixels_per_tile, int stride);
 
 inline unsigned char clip(const int x) { return (x < 0) ? 0 : ((x > 0xFF) ? 0xFF : (unsigned char)x); }
 
-
-template <bool do_iDCT, typename T_coeff> 
+template <bool do_iDCT, typename T_coeff>
 class postProcessColour : public poplar::Vertex {
  public:
   poplar::Input<poplar::Vector<int>> params;
@@ -38,39 +37,54 @@ class postProcessColour : public poplar::Vertex {
 
     // Do iDCT //
     if (do_iDCT) {
-      iDCT((short *)&Y[0], MCUs_per_tile * Y_MCU_pixels, Y_stride);
-      iDCT((short *)&CB[0], MCUs_per_tile * CB_MCU_pixels, CB_stride);
-      iDCT((short *)&CR[0], MCUs_per_tile * CR_MCU_pixels, CR_stride);
-    }
-
-    // Do fused upscale and YCbCr->RGB colour transform //
-    for (int Y_y = 0; Y_y < MCUs_per_tile * MCU_height; Y_y++) {
-      const T_coeff* CB_row = &CB[(Y_y >> CB_downshift_y) * CB_stride];
-      const T_coeff* CR_row = &CR[(Y_y >> CR_downshift_y) * CR_stride];
-
-      for (int Y_x = 0; Y_x < Y_stride; ++Y_x) {
-        int pixel = Y_y * Y_stride + Y_x;
-
-        int y = Y[pixel] << 8;
-        int cb = CB_row[Y_x >> CB_downshift_x] - 128;
-        int cr = CR_row[Y_x >> CR_downshift_x] - 128;
-
-        unsigned char* out = &RGB[3 * pixel];
-        *(out++) = clip((y + 359 * cr + 128) >> 8);            // R
-        *(out++) = clip((y - 88 * cb - 183 * cr + 128) >> 8);  // G
-        *(out) = clip((y + 454 * cb + 128) >> 8);              // B
+      iDCT((short*)&Y[0], MCUs_per_tile * Y_MCU_pixels, Y_stride);
+      if (num_channels == 3) {
+        iDCT((short*)&CB[0], MCUs_per_tile * CB_MCU_pixels, CB_stride);
+        iDCT((short*)&CR[0], MCUs_per_tile * CR_MCU_pixels, CR_stride);
       }
     }
 
+    if (num_channels == 1) {
+
+      // Just copy the brightness into all 3 output channels if image is greyscale //
+      for (int y = 0; y < MCUs_per_tile * MCU_height; y++) {
+        for (int x = 0; x < Y_stride; ++x) {
+          int pixel = y * Y_stride + x;
+          unsigned char* out = &RGB[3 * pixel];
+          unsigned char brightness = clip(Y[pixel]);
+          out[0] = brightness;
+          out[1] = brightness;
+          out[2] = brightness;
+        }
+      }
+
+    } else {
+
+      // Do fused upscale and YCbCr->RGB colour transform if there are 3 channels //
+      for (int Y_y = 0; Y_y < MCUs_per_tile * MCU_height; Y_y++) {
+        const T_coeff* CB_row = &CB[(Y_y >> CB_downshift_y) * CB_stride];
+        const T_coeff* CR_row = &CR[(Y_y >> CR_downshift_y) * CR_stride];
+
+        for (int Y_x = 0; Y_x < Y_stride; ++Y_x) {
+          int pixel = Y_y * Y_stride + Y_x;
+          unsigned char* out = &RGB[3 * pixel];
+
+          int y = Y[pixel] << 8;
+          int cb = CB_row[Y_x >> CB_downshift_x] - 128;
+          int cr = CR_row[Y_x >> CR_downshift_x] - 128;
+
+          *(out++) = clip((y + 359 * cr + 128) >> 8);            // R
+          *(out++) = clip((y - 88 * cb - 183 * cr + 128) >> 8);  // G
+          *(out) = clip((y + 454 * cb + 128) >> 8);              // B
+        }
+      }
+    }
     return true;
   }
 };
 
 template class postProcessColour<true, short>;
 template class postProcessColour<false, unsigned char>;
-
-
-
 
 void iDCT(short* data, int pixels_per_tile, int stride) {
   for (int pos = 0; pos < pixels_per_tile; pos += 8) {
@@ -82,7 +96,6 @@ void iDCT(short* data, int pixels_per_tile, int stride) {
     }
   }
 }
-
 
 // Precomputed DCT constants //
 #define W1 2841

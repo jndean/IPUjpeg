@@ -164,7 +164,7 @@ void JPGReader::upsampleAndColourTransform() {
 }
 
 void JPGReader::upsampleAndColourTransformIPU() {
-  if (m_num_channels == 3) {
+  // if (m_num_channels == 3) {
 
     m_IPU_params_table[param_MCUs_per_tile] = m_MCUs_per_tile;
     m_IPU_params_table[param_MCU_height] = m_MCU_size_y;
@@ -176,5 +176,5 @@ void JPGReader::upsampleAndColourTransformIPU() {
     m_IPU_params_table[param_num_channels] = m_num_channels;
 
     m_ipuEngine->run(0);
-  }
+  // }
 }
