@@ -75,6 +75,7 @@ void JPGReader::decodeBlock(ColourChannel *channel, short *freq_out, unsigned ch
   unsigned char code = 0;
   do {
     int value = getVLC(&m_vlc_tables[channel->ac_id][0], &code);
+    // int value = readNextDhtCode(m_dht_trees[channel->ac_id], &code);
     if (!code) break;  // EOB marker //
     if (!(code & 0x0F) && (code != 0xF0)) THROW(SYNTAX_ERROR);
     pos += (code >> 4) + 1;
@@ -104,6 +105,31 @@ int JPGReader::getVLC(DhtVlc *vlc_table, unsigned char *code) {
   if (value < (1 << (num_bits - 1))) value += ((0xffffffff) << num_bits) + 1;
   return value;
 }
+
+int JPGReader::readNextDhtCode(DhtNode *tree, unsigned char *code) {
+  int bits = showBits(16);
+
+  unsigned current_node = 0;
+  int bits_used = 0;
+  while (bits_used < 16) {
+    int bit = (bits >> (15 - bits_used)) & 1u;
+    current_node = tree[current_node].children[bit];
+    bits_used += 1;
+
+    if (tree[current_node].children[0] == 0) break;
+  }
+  unsigned char RLE_tuple = tree[current_node].tuple;
+  m_num_bufbits -= bits_used;
+  if (code) *code = RLE_tuple;
+
+  unsigned char num_bits = RLE_tuple & 0x0F;
+  if (!num_bits) return 0;
+  int value = getBits(num_bits);
+  if (value < (1 << (num_bits - 1))) value += ((0xffffffff) << num_bits) + 1;
+  return value;
+}
+
+
 
 // This only shows the bits, but doesn't move past them //
 int JPGReader::showBits(int num_bits) {
@@ -152,3 +178,4 @@ int JPGReader::getBits(int num_bits) {
   m_num_bufbits -= num_bits;
   return res;
 }
+

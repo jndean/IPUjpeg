@@ -6,9 +6,10 @@
 #include <numeric>
 #include <stdexcept>
 
-JPGReader::JPGReader(poplar::Device &ipuDevice, bool do_iDCT_on_IPU)
+JPGReader::JPGReader(poplar::Device &ipuDevice, bool do_iDCT_on_IPU, bool m_do_decompress_on_IPU)
     : m_ready_to_decode(false),
       m_do_iDCT_on_IPU(do_iDCT_on_IPU),
+      m_do_decompress_on_IPU(m_do_decompress_on_IPU),
       m_ipu_graph(ipuDevice.getTarget()),
       m_num_tiles(ipuDevice.getTarget().getNumTiles() * THREADS_PER_TILE),
       m_max_pixels(m_num_tiles * MAX_PIXELS_PER_TILE),
@@ -65,9 +66,12 @@ int JPGReader::decode() {
   if (!m_ready_to_decode) {
     throw std::runtime_error(".read() not called before .decode()");
   }
+  // CLeanup decoder state that could persist from previous decode
   m_error = NO_ERROR;
   m_restart_interval = 0;
   m_num_bufbits = 0;
+  for (auto tree : m_dht_trees) tree[0] = {{0, 0}, 0};
+
   auto start_time = std::chrono::high_resolution_clock::now();
 
   // Main format block parsing loop //
@@ -249,6 +253,73 @@ void JPGReader::decodeSOF() {
   m_pos += block_len;
 }
 
+// 'code' contains 'num_bits' bits, starting with MSB! //
+void addDhtLeaf(DhtNode* nodes, int& num_nodes, unsigned short code, int num_bits, unsigned char payload) {
+  unsigned current_node = 0;
+  for(int bit_pos = 15; bit_pos >= 16 - num_bits; --bit_pos) {
+    unsigned bit = (code >> bit_pos) & 1u;
+    unsigned next_node = nodes[current_node].children[bit];
+    if (next_node == 0) {
+      // Child node doesn't exist, create it //
+      next_node = num_nodes++;
+      assert(next_node < JPGReader::MAX_DHT_NODES);
+      nodes[next_node] = {{0, 0}, 0};
+      nodes[current_node].children[bit] = next_node;
+    }
+    current_node = next_node;
+  }
+  nodes[current_node].tuple = payload;
+}
+
+
+void JPGReader::decodeDHT() {
+  unsigned char *pos = m_pos;
+  unsigned int block_len = read16(pos);
+  unsigned char *block_end = pos + block_len;
+  if (block_end >= m_end) THROW(SYNTAX_ERROR);
+  pos += 2;
+
+  while (pos < block_end) {
+    unsigned char val = pos[0];
+    if (val & 0xEC) THROW(SYNTAX_ERROR);
+    if (val & 0x02) THROW(UNSUPPORTED_ERROR);
+    unsigned char table_id = (val | (val >> 3)) & 3;  // AC and DC
+    DhtVlc *vlc = &m_vlc_tables[table_id][0];
+    auto& dht_tree = m_dht_trees[table_id];
+    int tree_nodes = 1;
+    unsigned short code = 0;
+
+    unsigned char *tuple = pos + 17;
+    int remain = 65536, spread = 65536;
+    for (int code_len = 1; code_len <= 16; code_len++) {
+      spread >>= 1;
+      int count = pos[code_len];
+      if (!count) continue;
+      if (tuple + count > block_end) THROW(SYNTAX_ERROR);
+
+      remain -= count << (16 - code_len);
+      if (remain < 0) THROW(SYNTAX_ERROR);
+      for (int i = 0; i < count; i++, tuple++) {
+        addDhtLeaf(dht_tree, tree_nodes, code, code_len, *tuple);
+        for (int j = spread; j; j--, ++vlc, ++code) {
+          vlc->num_bits = (unsigned char)code_len;
+          vlc->tuple = *tuple;
+        }
+
+      }
+    }
+    while (remain--) {
+      vlc->num_bits = 0;
+      vlc++;
+    }
+    pos = tuple;
+  }
+
+  if (pos != block_end) THROW(SYNTAX_ERROR);
+  m_pos = block_end;
+}
+
+/*
 void JPGReader::decodeDHT() {
   unsigned char *pos = m_pos;
   unsigned int block_len = read16(pos);
@@ -290,6 +361,7 @@ void JPGReader::decodeDHT() {
   if (pos != block_end) THROW(SYNTAX_ERROR);
   m_pos = block_end;
 }
+*/
 
 void JPGReader::decodeDRI() {
   unsigned int block_len = read16(m_pos);

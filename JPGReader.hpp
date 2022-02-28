@@ -13,7 +13,6 @@
 #define TIMINGSTATS 1
 #endif
 
-
 #define NO_ERROR 0
 #define SYNTAX_ERROR 1
 #define UNSUPPORTED_ERROR 2
@@ -28,6 +27,10 @@
 typedef struct _DhtVlc {
   unsigned char tuple, num_bits;
 } DhtVlc;
+
+typedef struct _DhtNode {
+  unsigned char children[2], tuple;
+} DhtNode;
 
 typedef struct _ColourChannel {
   int id;
@@ -51,7 +54,10 @@ class JPGReader {
   static const ulong MAX_PIXELS_PER_TILE = 16 * 16;
   static const ulong THREADS_PER_TILE = 6;
 
-  JPGReader(poplar::Device& ipuDevice, bool do_iDCT_on_IPU = false);
+  static const ulong MAX_DHT_NODES = 255;
+  static_assert(MAX_DHT_NODES < (1u << (8 * sizeof(unsigned char))));
+
+  JPGReader(poplar::Device& ipuDevice, bool do_iDCT_on_IPU = false, bool do_decompress_on_IPU = false);
   ~JPGReader();
 
   void read(const char* filename);
@@ -68,6 +74,7 @@ class JPGReader {
  private:
   bool m_ready_to_decode;
   bool m_do_iDCT_on_IPU;
+  bool m_do_decompress_on_IPU;
 
   poplar::Graph m_ipu_graph;
   unsigned m_num_tiles;
@@ -92,12 +99,12 @@ class JPGReader {
   ColourChannel m_channels[3];
   std::vector<unsigned char> m_pixels;
   DhtVlc m_vlc_tables[4][65536];
+  DhtNode m_dht_trees[4][MAX_DHT_NODES];
   unsigned char m_dq_tables[4][64];
   int m_restart_interval;
   unsigned int m_bufbits;
   unsigned char m_num_bufbits;
   int m_block_space[64];
-
 
   unsigned short read16(const unsigned char* pos);
 
@@ -110,6 +117,7 @@ class JPGReader {
   void decodeScanCPU();
   void decodeBlock(ColourChannel* channel, short* freq_out, unsigned char* pixel_out);
   int getVLC(DhtVlc* vlc_table, unsigned char* code);
+  int readNextDhtCode(DhtNode* tree, unsigned char *code);
   int getBits(int num_bits);
   int showBits(int num_bits);
 
