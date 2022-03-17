@@ -60,6 +60,14 @@ void JPGReader::decodeScanCPU() {
   }
 }
 
+
+int JPGReader::getBitsAsValue(int num_bits) {
+  if (num_bits == 0) return 0;
+  int value = getBits(num_bits);
+  if (value < (1 << (num_bits - 1))) value += ((0xffffffff) << num_bits) + 1;
+  return value;
+}
+
 void JPGReader::decodeBlock(ColourChannel *channel, short *freq_out, unsigned char *pixel_out) {
   int MCU_stride = channel->tile_stride;
   for (int i = 0; i < 8; ++i) {
@@ -67,30 +75,40 @@ void JPGReader::decodeBlock(ColourChannel *channel, short *freq_out, unsigned ch
   }
 
   // Read DC value //
-  channel->dc_cumulative_val += getVLC(&m_vlc_tables[channel->dc_id][0], NULL);
+  unsigned char num_value_bits = getRLEtupleFromTable(&m_vlc_tables[channel->dc_id][0]) & 0x0F;
+  channel->dc_cumulative_val += getBitsAsValue(num_value_bits);
   freq_out[0] = (channel->dc_cumulative_val) * m_dq_tables[channel->dq_id][0];
+  
 
-  // Read  AC values //
+  // Read AC values //
   int pos = 0;
-  unsigned char code = 0;
   do {
-    int value = getVLC(&m_vlc_tables[channel->ac_id][0], &code);
-    // int value = readNextDhtCode(m_dht_trees[channel->ac_id], &code);
-    if (!code) break;  // EOB marker //
-    if (!(code & 0x0F) && (code != 0xF0)) THROW(SYNTAX_ERROR);
-    pos += (code >> 4) + 1;
+    // First: read a Huffman encoded RLE tuple //
+    unsigned char tuple = getRLEtupleFromTable(&m_vlc_tables[channel->ac_id][0]);
+    if (!tuple) break; // EOB marker
+    unsigned char num_value_bits = tuple & 0x0F;
+    unsigned char num_zeros = tuple >> 4;
+    // If there are no value bits, this must be a run of 16 (i.e. 15+1) zeros
+    if (num_value_bits == 0 && (num_zeros != 15)) THROW(SYNTAX_ERROR);
+    pos += num_zeros + 1;
     if (pos >= 64) THROW(SYNTAX_ERROR);
+
+    // Second: consume as many bits as specified by the tuple to recover the DCT coefficient value //
+    int value = getBitsAsValue(num_value_bits);
+
+    // Third: de-quantise and de-zigzag, placing value in output block //
     freq_out[deZigZagY[pos] * MCU_stride + deZigZagX[pos]] = value * m_dq_tables[channel->dq_id][pos];
   } while (pos < 63);
 
-  // Invert the DCT //
+  // Once the block of coefficients is recovered we can inverse the DCT (or leave it to later) //
   if (!m_do_iDCT_on_IPU) {
     for (int i = 0; i < 8; ++i) iDCT_row(&freq_out[i * MCU_stride]);
     for (int i = 0; i < 8; ++i) iDCT_col(&freq_out[i], &pixel_out[i], MCU_stride);
   }
 }
 
-int JPGReader::getVLC(DhtVlc *vlc_table, unsigned char *code) {
+
+unsigned char JPGReader::getRLEtupleFromTable(DhtVlc *vlc_table) {
   int symbol = showBits(16);
   DhtVlc vlc = vlc_table[symbol];
   if (!vlc.num_bits) {
@@ -98,17 +116,11 @@ int JPGReader::getVLC(DhtVlc *vlc_table, unsigned char *code) {
     return 0;
   }
   m_num_bufbits -= vlc.num_bits;
-  if (code) *code = vlc.tuple;
-  unsigned char num_bits = vlc.tuple & 0x0F;
-  if (!num_bits) return 0;
-  int value = getBits(num_bits);
-  if (value < (1 << (num_bits - 1))) value += ((0xffffffff) << num_bits) + 1;
-  return value;
+  return vlc.tuple;
 }
 
-int JPGReader::readNextDhtCode(DhtNode *tree, unsigned char *code) {
+unsigned char JPGReader::getRLEtupleFromTree(DhtNode *tree) {
   int bits = showBits(16);
-
   unsigned current_node = 0;
   int bits_used = 0;
   while (bits_used < 16) {
@@ -118,18 +130,9 @@ int JPGReader::readNextDhtCode(DhtNode *tree, unsigned char *code) {
 
     if (tree[current_node].children[0] == 0) break;
   }
-  unsigned char RLE_tuple = tree[current_node].tuple;
   m_num_bufbits -= bits_used;
-  if (code) *code = RLE_tuple;
-
-  unsigned char num_bits = RLE_tuple & 0x0F;
-  if (!num_bits) return 0;
-  int value = getBits(num_bits);
-  if (value < (1 << (num_bits - 1))) value += ((0xffffffff) << num_bits) + 1;
-  return value;
+  return tree[current_node].tuple;
 }
-
-
 
 // This only shows the bits, but doesn't move past them //
 int JPGReader::showBits(int num_bits) {

@@ -116,8 +116,11 @@ class JPGReader {
 
   void decodeScanCPU();
   void decodeBlock(ColourChannel* channel, short* freq_out, unsigned char* pixel_out);
-  int getVLC(DhtVlc* vlc_table, unsigned char* code);
-  int readNextDhtCode(DhtNode* tree, unsigned char *code);
+
+  int getBitsAsValue(int num_bits);
+  unsigned char getRLEtupleFromTable(DhtVlc *vlc_table);
+  unsigned char getRLEtupleFromTree(DhtNode *tree);
+
   int getBits(int num_bits);
   int showBits(int num_bits);
 
