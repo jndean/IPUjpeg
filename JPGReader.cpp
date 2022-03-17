@@ -284,24 +284,37 @@ void JPGReader::decodeDHT() {
     if (val & 0xEC) THROW(SYNTAX_ERROR);
     if (val & 0x02) THROW(UNSUPPORTED_ERROR);
     unsigned char table_id = (val | (val >> 3)) & 3;  // AC and DC
-    DhtVlc *vlc = &m_vlc_tables[table_id][0];
-    auto& dht_tree = m_dht_trees[table_id];
-    int tree_nodes = 1;
-    unsigned short code = 0;
 
-    unsigned char *tuple = pos + 17;
-    int remain = 65536, spread = 65536;
+    // First, decode as proper tree structure //
+    DhtNode* dht_tree = &m_dht_trees[table_id][0];
+    int num_tree_nodes = 1;
+    unsigned short huffman_code = 0;
+
+    unsigned char *current_tuple = pos + 17;
     for (int code_len = 1; code_len <= 16; code_len++) {
+      int count = pos[code_len];
+      if (!count) continue;
+      if (current_tuple + count > block_end) THROW(SYNTAX_ERROR);
+      for (int i = 0; i < count; i++) {
+        addDhtLeaf(dht_tree, num_tree_nodes, huffman_code, code_len, *current_tuple);
+        huffman_code += 1 << (16 - code_len);
+        current_tuple++;
+      }
+    }
+    unsigned char* dht_end_pos = current_tuple;
+
+    // Then, decode short (common) symbols as fast precomputed lookup table //
+    DhtTableItem *vlc = &m_dht_tables[table_id][0];
+    unsigned char *tuple = pos + 17;
+    int remain = DHT_TABLE_SIZE, spread = DHT_TABLE_SIZE;
+    for (unsigned code_len = 1; code_len <= DHT_TABLE_BITS; code_len++) {
       spread >>= 1;
       int count = pos[code_len];
       if (!count) continue;
-      if (tuple + count > block_end) THROW(SYNTAX_ERROR);
-
-      remain -= count << (16 - code_len);
+      remain -= count * spread;
       if (remain < 0) THROW(SYNTAX_ERROR);
       for (int i = 0; i < count; i++, tuple++) {
-        addDhtLeaf(dht_tree, tree_nodes, code, code_len, *tuple);
-        for (int j = spread; j; j--, ++vlc, ++code) {
+        for (int j = spread; j; j--, ++vlc) {
           vlc->num_bits = (unsigned char)code_len;
           vlc->tuple = *tuple;
         }
@@ -312,7 +325,8 @@ void JPGReader::decodeDHT() {
       vlc->num_bits = 0;
       vlc++;
     }
-    pos = tuple;
+
+    pos = dht_end_pos;
   }
 
   if (pos != block_end) THROW(SYNTAX_ERROR);
@@ -332,7 +346,7 @@ void JPGReader::decodeDHT() {
     if (val & 0xEC) THROW(SYNTAX_ERROR);
     if (val & 0x02) THROW(UNSUPPORTED_ERROR);
     unsigned char table_id = (val | (val >> 3)) & 3;  // AC and DC
-    DhtVlc *vlc = &m_vlc_tables[table_id][0];
+    DhtTableItem *vlc = &m_dht_tables[table_id][0];
 
     unsigned char *tuple = pos + 17;
     int remain = 65536, spread = 65536;

@@ -24,9 +24,9 @@
     return;      \
   } while (0)
 
-typedef struct _DhtVlc {
+typedef struct _DhtTableItem {
   unsigned char tuple, num_bits;
-} DhtVlc;
+} DhtTableItem;
 
 typedef struct _DhtNode {
   unsigned char children[2], tuple;
@@ -56,6 +56,9 @@ class JPGReader {
 
   static const ulong MAX_DHT_NODES = 255;
   static_assert(MAX_DHT_NODES < (1u << (8 * sizeof(unsigned char))));
+
+  static const ulong DHT_TABLE_BITS = 10; // Tunable value in [0, 16], balancing memory and compute
+  static const ulong DHT_TABLE_SIZE = 1 << DHT_TABLE_BITS;
 
   JPGReader(poplar::Device& ipuDevice, bool do_iDCT_on_IPU = false, bool do_decompress_on_IPU = false);
   ~JPGReader();
@@ -98,7 +101,7 @@ class JPGReader {
   int m_error;
   ColourChannel m_channels[3];
   std::vector<unsigned char> m_pixels;
-  DhtVlc m_vlc_tables[4][65536];
+  DhtTableItem m_dht_tables[4][DHT_TABLE_SIZE];
   DhtNode m_dht_trees[4][MAX_DHT_NODES];
   unsigned char m_dq_tables[4][64];
   int m_restart_interval;
@@ -116,11 +119,8 @@ class JPGReader {
 
   void decodeScanCPU();
   void decodeBlock(ColourChannel* channel, short* freq_out, unsigned char* pixel_out);
-
+  unsigned char decodeRLEtuple(int dht_id);
   int getBitsAsValue(int num_bits);
-  unsigned char getRLEtupleFromTable(DhtVlc *vlc_table);
-  unsigned char getRLEtupleFromTree(DhtNode *tree);
-
   int getBits(int num_bits);
   int showBits(int num_bits);
 

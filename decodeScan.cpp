@@ -5,7 +5,6 @@
 
 #include "JPGReader.hpp"
 
-
 void JPGReader::decodeScanCPU() {
   unsigned char *pos = m_pos;
   unsigned int header_len = read16(pos);
@@ -60,7 +59,6 @@ void JPGReader::decodeScanCPU() {
   }
 }
 
-
 int JPGReader::getBitsAsValue(int num_bits) {
   if (num_bits == 0) return 0;
   int value = getBits(num_bits);
@@ -75,17 +73,16 @@ void JPGReader::decodeBlock(ColourChannel *channel, short *freq_out, unsigned ch
   }
 
   // Read DC value //
-  unsigned char num_value_bits = getRLEtupleFromTable(&m_vlc_tables[channel->dc_id][0]) & 0x0F;
+  unsigned char num_value_bits = decodeRLEtuple(channel->dc_id) & 0x0F;
   channel->dc_cumulative_val += getBitsAsValue(num_value_bits);
   freq_out[0] = (channel->dc_cumulative_val) * m_dq_tables[channel->dq_id][0];
-  
 
   // Read AC values //
   int pos = 0;
   do {
     // First: read a Huffman encoded RLE tuple //
-    unsigned char tuple = getRLEtupleFromTable(&m_vlc_tables[channel->ac_id][0]);
-    if (!tuple) break; // EOB marker
+    unsigned char tuple = decodeRLEtuple(channel->ac_id);
+    if (!tuple) break;  // EOB marker
     unsigned char num_value_bits = tuple & 0x0F;
     unsigned char num_zeros = tuple >> 4;
     // If there are no value bits, this must be a run of 16 (i.e. 15+1) zeros
@@ -107,20 +104,20 @@ void JPGReader::decodeBlock(ColourChannel *channel, short *freq_out, unsigned ch
   }
 }
 
-
-unsigned char JPGReader::getRLEtupleFromTable(DhtVlc *vlc_table) {
-  int symbol = showBits(16);
-  DhtVlc vlc = vlc_table[symbol];
-  if (!vlc.num_bits) {
-    m_error = SYNTAX_ERROR;
-    return 0;
+unsigned char JPGReader::decodeRLEtuple(int dht_id) {
+  // See if the symbol is short enough to be in the table of precomputed values //
+  if (DHT_TABLE_BITS > 0) {
+    int symbol = showBits(DHT_TABLE_BITS);
+    DhtTableItem vlc = m_dht_tables[dht_id][symbol];
+    if (vlc.num_bits > 0) {
+      m_num_bufbits -= vlc.num_bits;
+      return vlc.tuple;
+    }
   }
-  m_num_bufbits -= vlc.num_bits;
-  return vlc.tuple;
-}
 
-unsigned char JPGReader::getRLEtupleFromTree(DhtNode *tree) {
+  // Otherwise do a proper huffman tree lookup //
   int bits = showBits(16);
+  DhtNode *tree = &m_dht_trees[dht_id][0];
   unsigned current_node = 0;
   int bits_used = 0;
   while (bits_used < 16) {
@@ -133,6 +130,7 @@ unsigned char JPGReader::getRLEtupleFromTree(DhtNode *tree) {
   m_num_bufbits -= bits_used;
   return tree[current_node].tuple;
 }
+
 
 // This only shows the bits, but doesn't move past them //
 int JPGReader::showBits(int num_bits) {
@@ -181,4 +179,3 @@ int JPGReader::getBits(int num_bits) {
   m_num_bufbits -= num_bits;
   return res;
 }
-
