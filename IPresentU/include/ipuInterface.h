@@ -8,6 +8,7 @@ extern "C" {
 #define JPGSPERTILE (1)
 
 
+
 typedef struct {
     unsigned starts[JPGSPERTILE];
     unsigned lengths[JPGSPERTILE];

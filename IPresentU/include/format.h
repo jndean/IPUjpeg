@@ -7,7 +7,7 @@ extern "C" {
 
 
 int readJPG(
-  unsigned char *inbuf, unsigned insize,
+  const unsigned char *inbuf, unsigned insize,
   unsigned char *outbuf, unsigned outsize,
   unsigned char *scratchbuf, unsigned scratchsize,
   const char* outfile

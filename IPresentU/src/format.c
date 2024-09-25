@@ -7,13 +7,14 @@
 #include<print.h>
 #endif
 
+#include "format.h"
 
 #define NO_ERROR 0
 #define SYNTAX_ERROR 1
 #define UNSUPPORTED_ERROR 2
 #define OOM_ERROR 3
 
-#define MAX_DHTVLC_NODES 255
+#define MAX_DHTVLC_NODES 512
 
 // Constancts for computing a DCT
 #define W1 2841
@@ -32,7 +33,8 @@ typedef struct _DhtVlc {
 } DhtVlc;
 
 typedef struct _DhtVlcNode {
-  unsigned char children[2], tuple;
+  unsigned short children[2];
+  unsigned char tuple;
 } DhtVlcNode;
 
 
@@ -47,7 +49,7 @@ typedef struct _ColourChannel {
 
 
 typedef struct _JPG {
-  unsigned char *buf, *pos, *end;
+  const unsigned char *buf, *pos, *end;
   unsigned int size;
   unsigned short width, height;
   unsigned short num_blocks_x, num_blocks_y;
@@ -69,12 +71,6 @@ typedef struct _JPG {
 
 
 
-int readJPG(
-  unsigned char *inbuf, unsigned insize,
-  unsigned char *outbuf, unsigned outsize,
-  unsigned char *scratchbuf, unsigned scratchsize,
-  const char* outfile
-); 
 void writeJPG(const unsigned char* pixels, unsigned width, unsigned height, const char* filename);
 unsigned char* allocScratch(JPG* jpg, size_t size);
 void skipBlock(JPG* jpg);
@@ -144,7 +140,7 @@ unsigned char* allocScratch(JPG* jpg, size_t size) {
 
 
 void decodeSOF(JPG* jpg){
-  unsigned char* block = jpg->pos;
+  const unsigned char* block = jpg->pos;
   unsigned int block_len = read16(block);
   if(block_len < 9 || block + block_len >= jpg->end)
     THROW(SYNTAX_ERROR);
@@ -235,9 +231,9 @@ void addDhtLeaf(JPG* jpg, DhtVlcNode* nodes, int* num_nodes, unsigned short code
 
 
 void decodeDHT(JPG* jpg){
-  unsigned char* pos = jpg->pos;
+  const unsigned char* pos = jpg->pos;
   unsigned int block_len = read16(pos);
-  unsigned char *block_end = pos + block_len;
+  const unsigned char *block_end = pos + block_len;
   if(block_end >= jpg->end) THROW(SYNTAX_ERROR);
   pos += 2;
   
@@ -251,13 +247,14 @@ void decodeDHT(JPG* jpg){
     DhtVlcNode* dht_tree = &jpg->vlc_trees[table_id][0];
     int num_tree_nodes = 1;
     unsigned short huffman_code = 0;
-    unsigned char *tuple = pos + 17;
+    const unsigned char *tuple = pos + 17;
     for (int code_len = 1; code_len <= 16; code_len++) {
       int count = pos[code_len];
       if (!count) continue;
       if (tuple + count > block_end) THROW(SYNTAX_ERROR);
       for (int i = 0; i < count; i++) {
         addDhtLeaf(jpg, dht_tree, &num_tree_nodes, huffman_code, code_len, *tuple);
+        if (jpg->error) return;
         huffman_code += 1 << (16 - code_len);
         tuple++;
       }
@@ -273,7 +270,7 @@ void decodeDHT(JPG* jpg){
 
 void decodeDRI(JPG *jpg){
   unsigned int block_len = read16(jpg->pos);
-  unsigned char *block_end = jpg->pos + block_len;
+  const unsigned char *block_end = jpg->pos + block_len;
   if ((block_len < 2) || (block_end >= jpg->end)) THROW(SYNTAX_ERROR);
   jpg->restart_interval = read16(jpg->pos + 2);
   jpg->pos = block_end; 
@@ -282,9 +279,9 @@ void decodeDRI(JPG *jpg){
 
 void decodeDQT(JPG *jpg){
   unsigned int block_len = read16(jpg->pos);
-  unsigned char *block_end = jpg->pos + block_len;
+  const unsigned char *block_end = jpg->pos + block_len;
   if (block_end >= jpg->end) THROW(SYNTAX_ERROR);
-  unsigned char *pos = jpg->pos + 2;
+  const unsigned char *pos = jpg->pos + 2;
 
   while(pos + 65 <= block_end){
     unsigned char table_id = pos[0];
@@ -300,7 +297,7 @@ void decodeDQT(JPG *jpg){
 
 
 int readJPG(
-  unsigned char *inbuf, unsigned insize,
+  const unsigned char *inbuf, unsigned insize,
   unsigned char *outbuf, unsigned outsize,
   unsigned char *scratchbuf, unsigned scratchsize,
   const char* outfile // Leave NULL to not save
@@ -495,7 +492,7 @@ void decodeBlock(JPG* jpg, ColourChannel* channel, unsigned char* out){
 
 
 void decodeScanCPU(JPG* jpg){
-  unsigned char *pos = jpg->pos;
+  const unsigned char *pos = jpg->pos;
   unsigned int header_len = read16(pos);
   if (pos + header_len >= jpg->end) THROW(SYNTAX_ERROR);
   pos += 2;
@@ -524,28 +521,28 @@ void decodeScanCPU(JPG* jpg){
       // Loop over all channels //
       for (i = 0, channel = jpg->channels; i < jpg->num_channels; i++, channel++){
 
-	// Loop over samples in block //
-	for (int sample_y = 0; sample_y < channel->samples_y; ++sample_y){
-	  for (int sample_x = 0; sample_x < channel->samples_x; ++sample_x){
-	    
-	    int out_pos = ((block_y * channel->samples_y + sample_y) * channel->stride
-			   + block_x * channel->samples_x + sample_x) << 3;
-	    decodeBlock(jpg, channel, &channel->pixels[out_pos]);
-	    if (jpg->error) return;
-	  }
-	}
+        // Loop over samples in block //
+        for (int sample_y = 0; sample_y < channel->samples_y; ++sample_y){
+          for (int sample_x = 0; sample_x < channel->samples_x; ++sample_x){
+            
+            int out_pos = ((block_y * channel->samples_y + sample_y) * channel->stride
+              + block_x * channel->samples_x + sample_x) << 3;
+            decodeBlock(jpg, channel, &channel->pixels[out_pos]);
+            if (jpg->error) return;
+          }
+        }
       }
 
       if (restart_interval && !(--restart_count)){
-	// Byte align //
-	jpg->num_bufbits &= 0xF8;
-	i = getBits(jpg, 16);
-	if (((i & 0xFFF8) != 0xFFD0) || ((i & 7) != next_restart_index))
-	  THROW(SYNTAX_ERROR);
-	next_restart_index = (next_restart_index + 1) & 7;
-	restart_count = restart_interval;
-	for (i = 0; i < 3; i++)
-	  jpg->channels[i].dc_cumulative_val = 0;
+        // Byte align //
+        jpg->num_bufbits &= 0xF8;
+        i = getBits(jpg, 16);
+        if (((i & 0xFFF8) != 0xFFD0) || ((i & 7) != next_restart_index)) 
+          THROW(SYNTAX_ERROR);
+        next_restart_index = (next_restart_index + 1) & 7;
+        restart_count = restart_interval;
+        for (i = 0; i < 3; i++)
+          jpg->channels[i].dc_cumulative_val = 0;
       }
     }
   }
@@ -687,7 +684,7 @@ void upsampleAndColourTransform(JPG* jpg) {
     if ((channel->width < jpg->width) || (channel->height < jpg->height))
       upsampleChannel(jpg, channel);
     if ((channel->width < jpg->width) || (channel->height < jpg->height)){
-      // fprintf(stderr, "Logical error?\n");
+      printf("Logical error?\n");
       THROW(SYNTAX_ERROR);
     }
   }
