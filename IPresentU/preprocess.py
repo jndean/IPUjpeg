@@ -4,6 +4,7 @@ import sys
 import numpy as np
 import os
 from PIL import Image
+from tqdm import tqdm
 
 
 
@@ -34,7 +35,8 @@ def export_imgs(imgs, block_w, block_h, blocks_x, blocks_y, outdir):
     with open(f'{outdir}/format.meta', 'wb') as f:
         assert f.write(format) == len(format)
 
-    for img_num, img in enumerate(imgs):
+    print("Exporting...")
+    for img_num, img in tqdm(enumerate(imgs)):
         img = img.resize((w, h))
         for x in range(blocks_x):
             for y in range(blocks_y):
@@ -52,10 +54,10 @@ if __name__ == '__main__':
     # img = Image.open(filename)
     # print(img)
 
-    block_w = 16
-    block_h = 16
-    blocks_x = 10
-    blocks_y = 10
+    block_w = 32
+    block_h = 32
+    blocks_x = 40
+    blocks_y = 23
 
 
     imgs = create_test_imgs(20, block_w * blocks_x, block_h * blocks_y)

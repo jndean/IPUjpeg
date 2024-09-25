@@ -10,10 +10,8 @@ extern "C" {
 
 
 typedef struct {
-    unsigned starts[JPGSPERTILE];
-    unsigned lengths[JPGSPERTILE];
-    unsigned char buf[0];
-} DecoderTransfer_t;
+    unsigned currentSlide;
+} SlidesState_t;
 
 
 

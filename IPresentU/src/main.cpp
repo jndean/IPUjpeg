@@ -95,6 +95,7 @@ struct Slides
     std::vector<unsigned> starts;
     std::vector<unsigned> lengths;
 
+    SlidesState_t state;
 
     Slides(const char* dir) {
         char filename[200];
@@ -161,6 +162,19 @@ struct Slides
             }
         }
 
+        // Prep animation state machine
+        state.currentSlide = 0;
+    }
+
+    void nextSlide() {
+        state.currentSlide = (state.currentSlide + 1) % numImgs;
+    }
+    void prevSlide() {
+        state.currentSlide = (state.currentSlide + numImgs - 1) % numImgs;
+    }
+
+    void tick(/*int numSteps*/) {
+
     }
 };
 
@@ -174,14 +188,15 @@ int main(int argc, char** argv) {
 
     // Load presentation from disk
     Slides slides(argv[1]);
-    printf("N=%d, height=%d\n", slides.numImgs, slides.height);
 
 
     const unsigned int bytesPerPixel = 3;
     const unsigned int pixelsSize = slides.width * slides.height * bytesPerPixel;
-    const unsigned int filesSize = slides.files.size(); // TMP
     const unsigned int numTiles = slides.numBlocks;
     const unsigned int scratchSize = 200000;
+
+    const unsigned int windowWidth = 160; // or slides.width;
+    const unsigned int windowHeight = 90; // or slides.width
 
     // Setup IPU resources
     auto device = getIPU(true);
@@ -193,8 +208,10 @@ int main(int argc, char** argv) {
     poplar::Tensor starts_d = graph.addVariable(poplar::UNSIGNED_INT, {numTiles, slides.numImgs}, "starts");
     poplar::Tensor lengths_d = graph.addVariable(poplar::UNSIGNED_INT, {numTiles, slides.numImgs}, "lengths");
     poplar::Tensor scratch_d = graph.addVariable(poplar::UNSIGNED_CHAR, {numTiles, scratchSize}, "scratch");
+    poplar::Tensor state_d = graph.addVariable(poplar::UNSIGNED_CHAR, {sizeof(SlidesState_t)}, "state");
     poplar::DataStream pixelsStream = graph.addDeviceToHostFIFO("pixels-stream", poplar::UNSIGNED_CHAR, pixelsSize);
-    poplar::DataStream filesStream = graph.addHostToDeviceFIFO("files-stream", poplar::UNSIGNED_CHAR, filesSize);
+    poplar::DataStream stateStream = graph.addHostToDeviceFIFO("state-stream", poplar::UNSIGNED_CHAR, sizeof(SlidesState_t));
+    poplar::DataStream filesStream = graph.addHostToDeviceFIFO("files-stream", poplar::UNSIGNED_CHAR, slides.files.size());
     poplar::DataStream startsStream = graph.addHostToDeviceFIFO("starts-stream", poplar::UNSIGNED_INT, slides.starts.size());
     poplar::DataStream lengthsStream = graph.addHostToDeviceFIFO("lengths-stream", poplar::UNSIGNED_INT, slides.lengths.size());
 
@@ -215,32 +232,38 @@ int main(int argc, char** argv) {
 
             poplar::VertexRef vtx = graph.addVertex(mainCS, "Decoder", {
                 {"files", files_d[tile]}, {"pixels", block}, {"scratch", scratch_d[tile]},
-                {"starts", starts_d[tile]}, {"lengths", lengths_d[tile]}
+                {"stateBuf", state_d}, {"starts", starts_d[tile]}, {"lengths", lengths_d[tile]}
             });
             graph.setTileMapping(vtx, tile);
             graph.setPerfEstimate(vtx, 10000000);
         }    
     }
+    graph.setTileMapping(state_d, 0);
 
-    poplar::program::Sequence program({
+    poplar::program::Sequence loadProg({
         poplar::program::Copy(filesStream, files_d),
         poplar::program::Copy(startsStream, starts_d),
         poplar::program::Copy(lengthsStream, lengths_d),
+    });
+    poplar::program::Sequence renderProg({
+        poplar::program::Copy(stateStream, state_d),
         poplar::program::Execute(mainCS),
         poplar::program::Copy(pixels_d, pixelsStream),
     });
 
-    poplar::Engine engine(graph, program);
+    poplar::Engine engine(graph, {loadProg, renderProg});
     engine.connectStream("pixels-stream", pixels_h.data());
+    engine.connectStream("state-stream", &slides.state);
     engine.connectStream("files-stream", slides.files.data());
     engine.connectStream("starts-stream", slides.starts.data());
     engine.connectStream("lengths-stream", slides.lengths.data());
     engine.load(device);
+    engine.run(0);
 
 
 
     SDL_Init( SDL_INIT_EVERYTHING );
-    SDL_Window* window = SDL_CreateWindow( "SDL", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, slides.width, slides.height, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI );
+    SDL_Window* window = SDL_CreateWindow( "SDL", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, windowWidth, windowHeight, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     SDL_Renderer* renderer = SDL_CreateRenderer( window, -1, SDL_RENDERER_ACCELERATED );
     SDL_SetHint( SDL_HINT_RENDER_SCALE_QUALITY, "1" );
     SDL_Texture* texture = SDL_CreateTexture( renderer, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, slides.width, slides.height);
@@ -252,18 +275,15 @@ int main(int argc, char** argv) {
         SDL_Event ev;
         while( SDL_PollEvent( &ev ) )
         {
-            if( ( SDL_QUIT == ev.type ) ||
-                ( SDL_KEYDOWN == ev.type && SDL_SCANCODE_ESCAPE == ev.key.keysym.scancode ) )
-            {
+            if(( SDL_QUIT == ev.type ) || ( SDL_KEYDOWN == ev.type && SDL_SCANCODE_ESCAPE == ev.key.keysym.scancode ) ) {
                 running = false;
                 break;
             }
 
-            // if( SDL_KEYDOWN == ev.type && SDL_SCANCODE_L == ev.key.keysym.scancode )
-            // {
-            //     useLocktexture = !useLocktexture;
-            //     std::cout << "Using " << ( useLocktexture ? "SDL_LockTexture() + std::copy_n()" : "SDL_UpdateTexture()" ) << '\n';
-            // }
+            if( SDL_KEYDOWN == ev.type) {
+                if (SDL_SCANCODE_LEFT == ev.key.keysym.scancode) slides.prevSlide();
+                if (SDL_SCANCODE_RIGHT == ev.key.keysym.scancode) slides.nextSlide();
+            }
         }
         
         // splat down some random pixels
@@ -275,7 +295,7 @@ int main(int argc, char** argv) {
         //     pixels[ offset + 2 ] = rand() % 256;        // r
         // }
         
-        engine.run(0);
+        engine.run(1);
 
 
         SDL_UpdateTexture( texture, nullptr, pixels_h.data(), slides.width * bytesPerPixel );
