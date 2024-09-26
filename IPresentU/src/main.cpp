@@ -82,10 +82,15 @@ failure:
 }
 
 
-struct Slides
-{
-    public:
-    
+struct SlideDesc {
+    unsigned numFrames;
+    unsigned transition;
+    unsigned transitionFrames;
+    unsigned firstImg;
+};
+
+
+struct Slides {
     unsigned numImgs;
     unsigned width, height;
     unsigned block_w, block_h;
@@ -95,7 +100,14 @@ struct Slides
     std::vector<unsigned> starts;
     std::vector<unsigned> lengths;
 
-    SlidesState_t state;
+    std::vector<SlideDesc> slideDescs;
+    unsigned currentSlide;
+    bool transitioning;
+    unsigned targetSlide;
+    unsigned currentFrame;
+
+    IPURequest_t ipuRequest;
+    std::chrono::time_point<std::chrono::steady_clock> lastTick;
 
     Slides(const char* dir) {
         char filename[200];
@@ -106,31 +118,44 @@ struct Slides
         std::vector<char> buffer(std::istreambuf_iterator<char>(input), {});
 
         unsigned* data = (unsigned*) buffer.data();
-        numImgs = data[0];
-        width = data[1];
-        height = data[2];
-        block_w = data[3];
-        block_h = data[4];
-        blocks_x = data[5];
-        blocks_y = data[6];
+        numImgs = *(data++);
+        width = *(data++);
+        height = *(data++);
+        block_w = *(data++);
+        block_h = *(data++);
+        blocks_x = *(data++);
+        blocks_y = *(data++);
         numBlocks = blocks_x * blocks_y;
+        for (unsigned firstImg = 0; firstImg < numImgs;) {
+            SlideDesc desc;
+            desc.numFrames = *(data++);
+            desc.transition = *(data++);
+            desc.transitionFrames = *(data++);
+            desc.firstImg = firstImg;
+            firstImg += desc.numFrames;
+            slideDescs.push_back(desc);
+            printf("Slide(%d, %d, %d)\n", desc.numFrames, desc.transition, desc.transitionFrames);
+        }
 
 
         // Load slide chunks
+        printf("Finding files...\n");
         std::vector<int> filebufSizes(numBlocks, 0);
-        for (unsigned y = 0; y < blocks_y; ++y) {
+        for (unsigned y = 0, progress = 1; y < blocks_y; ++y) {
             for (unsigned x = 0; x < blocks_x; ++x) {
-                for (unsigned img = 0; img < numImgs; ++img) {
+                for (unsigned img = 0; img < numImgs; ++img, ++progress) {
                     snprintf(filename, sizeof(filename), "%s/%d_%d_%d.jpg", dir, img, x, y);
                     struct stat stat_buf;
                     int rc = stat(filename, &stat_buf);
                     if (rc) throw std::invalid_argument(filename);
                     filebufSizes[y * blocks_x + x] += stat_buf.st_size;
+                    printf("\rFinding files: %3d/%d", progress, blocks_y * blocks_x * numImgs);
                 }
             }
         }
         int maxBufSize = *std::max_element(filebufSizes.begin(), filebufSizes.end());
         fileBufSize = (maxBufSize + 3u) & (~3u); // 4-byte pad
+        printf("\nDone, filebuf size = %0.2lfMB\n", (fileBufSize * blocks_y * blocks_x) / 1e6);
 
         files = std::vector<unsigned char>(numBlocks * fileBufSize);
         starts = std::vector<unsigned>(numBlocks * numImgs);
@@ -138,12 +163,11 @@ struct Slides
         auto start_it = starts.begin();
         auto length_it = lengths.begin();
 
-        for (unsigned y = 0; y < blocks_y; ++y) {
+        for (unsigned y = 0, progress = 1; y < blocks_y; ++y) {
             for (unsigned x = 0; x < blocks_x; ++x) {
-
                 unsigned bufOffset = fileBufSize * (y * blocks_x + x);
                 unsigned bufPos = 0;
-                for (unsigned img = 0; img < numImgs; ++img) {
+                for (unsigned img = 0; img < numImgs; ++img, ++progress) {
                     snprintf(filename, sizeof(filename), "%s/%d_%d_%d.jpg", dir, img, x, y);
                     FILE* f = fopen(filename, "r");
                     if (NULL == f) throw std::invalid_argument(filename);
@@ -158,23 +182,61 @@ struct Slides
                     *(start_it++) = bufPos;
                     *(length_it++) = filesize;
                     bufPos += filesize;
+                    
+                    printf("\rLoading files: %3d/%d", progress, blocks_y * blocks_x * numImgs);
                 }
             }
         }
+        printf("\nDone\n");
 
         // Prep animation state machine
-        state.currentSlide = 0;
+        currentSlide = 0;
+        targetSlide = 0;
+        transitioning = false;
+        currentFrame = 0;
+        ipuRequest.currentImage = 0;
+        ipuRequest.transitionImage = -1;
+        lastTick = std::chrono::steady_clock::now();
     }
 
     void nextSlide() {
-        state.currentSlide = (state.currentSlide + 1) % numImgs;
+        targetSlide = std::min(targetSlide + 1, (unsigned) slideDescs.size() - 1);
+        if (transitioning) return;
+        
+        SlideDesc slide = slideDescs[currentSlide];
+        // if (slide.transition == INSTANT) {
+            currentSlide = targetSlide;
+            currentFrame = 0;
+            return;
+        // }
+        // TODO: other transitions
     }
     void prevSlide() {
-        state.currentSlide = (state.currentSlide + numImgs - 1) % numImgs;
+        if (targetSlide) targetSlide -= 1;
+        if (transitioning) return;
+
+        currentSlide = targetSlide;
+        currentFrame = 0;
     }
 
-    void tick(/*int numSteps*/) {
+    void tick() {
+        const auto now = std::chrono::steady_clock::now();
+        auto secondsPassed = std::chrono::duration< float >(now - lastTick).count();
+        lastTick = now;
 
+        const int FPS = 20;
+        static double frameRemainder = 0;
+        double framesTodo = secondsPassed * FPS + frameRemainder;
+        int wholeFramesTodo = (int)framesTodo;
+        frameRemainder = framesTodo - wholeFramesTodo;
+
+        SlideDesc slide = slideDescs[currentSlide];
+        if (!transitioning) {
+            currentFrame = (currentFrame + wholeFramesTodo) % slide.numFrames;
+            ipuRequest.currentImage = slide.firstImg + currentFrame;
+            ipuRequest.transitionFrame = -1; // No transition
+            return;
+        }
     }
 };
 
@@ -196,7 +258,7 @@ int main(int argc, char** argv) {
     const unsigned int scratchSize = 200000;
 
     const unsigned int windowWidth = 160; // or slides.width;
-    const unsigned int windowHeight = 90; // or slides.width
+    const unsigned int windowHeight = 90; // or slides.height;
 
     // Setup IPU resources
     auto device = getIPU(true);
@@ -208,9 +270,9 @@ int main(int argc, char** argv) {
     poplar::Tensor starts_d = graph.addVariable(poplar::UNSIGNED_INT, {numTiles, slides.numImgs}, "starts");
     poplar::Tensor lengths_d = graph.addVariable(poplar::UNSIGNED_INT, {numTiles, slides.numImgs}, "lengths");
     poplar::Tensor scratch_d = graph.addVariable(poplar::UNSIGNED_CHAR, {numTiles, scratchSize}, "scratch");
-    poplar::Tensor state_d = graph.addVariable(poplar::UNSIGNED_CHAR, {sizeof(SlidesState_t)}, "state");
+    poplar::Tensor request_d = graph.addVariable(poplar::UNSIGNED_CHAR, {sizeof(IPURequest_t)}, "request");
     poplar::DataStream pixelsStream = graph.addDeviceToHostFIFO("pixels-stream", poplar::UNSIGNED_CHAR, pixelsSize);
-    poplar::DataStream stateStream = graph.addHostToDeviceFIFO("state-stream", poplar::UNSIGNED_CHAR, sizeof(SlidesState_t));
+    poplar::DataStream requestStream = graph.addHostToDeviceFIFO("request-stream", poplar::UNSIGNED_CHAR, sizeof(IPURequest_t));
     poplar::DataStream filesStream = graph.addHostToDeviceFIFO("files-stream", poplar::UNSIGNED_CHAR, slides.files.size());
     poplar::DataStream startsStream = graph.addHostToDeviceFIFO("starts-stream", poplar::UNSIGNED_INT, slides.starts.size());
     poplar::DataStream lengthsStream = graph.addHostToDeviceFIFO("lengths-stream", poplar::UNSIGNED_INT, slides.lengths.size());
@@ -232,13 +294,13 @@ int main(int argc, char** argv) {
 
             poplar::VertexRef vtx = graph.addVertex(mainCS, "Decoder", {
                 {"files", files_d[tile]}, {"pixels", block}, {"scratch", scratch_d[tile]},
-                {"stateBuf", state_d}, {"starts", starts_d[tile]}, {"lengths", lengths_d[tile]}
+                {"requestBuf", request_d}, {"starts", starts_d[tile]}, {"lengths", lengths_d[tile]}
             });
             graph.setTileMapping(vtx, tile);
             graph.setPerfEstimate(vtx, 10000000);
         }    
     }
-    graph.setTileMapping(state_d, 0);
+    graph.setTileMapping(request_d, 0);
 
     poplar::program::Sequence loadProg({
         poplar::program::Copy(filesStream, files_d),
@@ -246,18 +308,20 @@ int main(int argc, char** argv) {
         poplar::program::Copy(lengthsStream, lengths_d),
     });
     poplar::program::Sequence renderProg({
-        poplar::program::Copy(stateStream, state_d),
+        poplar::program::Copy(requestStream, request_d),
         poplar::program::Execute(mainCS),
         poplar::program::Copy(pixels_d, pixelsStream),
     });
 
+    printf("Creating IPU engine\n");
     poplar::Engine engine(graph, {loadProg, renderProg});
     engine.connectStream("pixels-stream", pixels_h.data());
-    engine.connectStream("state-stream", &slides.state);
+    engine.connectStream("request-stream", &slides.ipuRequest);
     engine.connectStream("files-stream", slides.files.data());
     engine.connectStream("starts-stream", slides.starts.data());
     engine.connectStream("lengths-stream", slides.lengths.data());
     engine.load(device);
+    printf("Uploading slides to IPU\n");
     engine.run(0);
 
 
@@ -286,17 +350,8 @@ int main(int argc, char** argv) {
             }
         }
         
-        // splat down some random pixels
-        // for( unsigned int i = 0; i < 2; i++ ) {
-        //     snekx = (snekx + (rand() % 3) - 1) % slides.width;
-        //     sneky = (sneky + (rand() % 3) - 1) % slides.height;
-
-        //     const unsigned int offset = ( slides.width * sneky * 3 ) + snekx * 3;
-        //     pixels[ offset + 2 ] = rand() % 256;        // r
-        // }
-        
+        slides.tick();
         engine.run(1);
-
 
         SDL_UpdateTexture( texture, nullptr, pixels_h.data(), slides.width * bytesPerPixel );
         SDL_RenderCopy( renderer, texture, nullptr, nullptr );

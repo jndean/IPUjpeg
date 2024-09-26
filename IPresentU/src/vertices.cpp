@@ -11,18 +11,19 @@ class Decoder : public poplar::Vertex {
     poplar::Input<poplar::Vector<unsigned char>> files;
     poplar::Input<poplar::Vector<unsigned>> starts;
     poplar::Input<poplar::Vector<unsigned>> lengths;
-    poplar::Input<poplar::Vector<unsigned char>> stateBuf;
+    poplar::Input<poplar::Vector<unsigned char>> requestBuf;
     poplar::Output<poplar::Vector<unsigned char>> pixels;
     poplar::Output<poplar::Vector<unsigned char>> scratch;
     
 
     void compute() {
 
-        SlidesState_t* state = (SlidesState_t*) &stateBuf[0];
-        int currentSlide = state->currentSlide;
+        IPURequest_t* request = (IPURequest_t*) &requestBuf[0];
+        int currentImage = request->currentImage;
+
 
         int success = readJPG(
-            &files[starts[currentSlide]], lengths[currentSlide],
+            &files[starts[currentImage]], lengths[currentImage],
             &pixels[0], pixels.size(),
             &scratch[0], scratch.size(),
             NULL

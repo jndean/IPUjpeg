@@ -5,13 +5,23 @@ extern "C" {
 #endif
 
 
-#define JPGSPERTILE (1)
 
+enum Transition_t {
+    INSTANT = 0,
+    FADE = 1,
+    WIPE = 2,
+    DISSOLVE = 3
+};
 
 
 typedef struct {
-    unsigned currentSlide;
-} SlidesState_t;
+    unsigned currentImage;
+
+    int transitionImage;
+    Transition_t transition;
+    int transitionFrame;
+    int transitionLength;
+} IPURequest_t;
 
 
 
