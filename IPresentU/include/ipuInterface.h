@@ -9,8 +9,8 @@ extern "C" {
 enum Transition_t {
     INSTANT = 0,
     FADE = 1,
-    WIPE = 2,
-    DISSOLVE = 3
+    LOCAL_H_WIPE = 2,
+    CIRCLE_WIPE = 3
 };
 
 

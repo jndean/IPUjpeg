@@ -1,21 +1,24 @@
 from collections import namedtuple
 from enum import IntEnum
+import os
 import struct
 import sys
 
 import numpy as np
-import os
+import pdf2image as pdf
 from PIL import Image
 from tqdm import tqdm
+import cv2
 
 
 class TransitionType(IntEnum):
     INSTANT = 0
     FADE = 1
-    WIPE = 2
-    DISSOLVE = 3
+    LOCAL_H_WIPE = 2
+    CIRCLE_WIPE = 3
+    DISSOLVE = 4
 
-Slide = namedtuple("Slide", ["numFrames", "transition", "transitionFrames"])
+Slide = namedtuple("Slide", ["numFrames", "loops", "transition", "transitionFrames"])
 
 def create_test_imgs(n, width, height):
     base_img = np.zeros(shape=(height, width, 3), dtype=np.uint8)
@@ -31,7 +34,18 @@ def create_test_imgs(n, width, height):
         img = base_img.copy()
         g = int(i * 256 / n)
         img[:, :, 1] = g
-        imgs.append(Image.fromarray(img))
+        imgs.append(img)
+    return imgs
+
+
+def video_to_imgs(filename):
+    vidcap = cv2.VideoCapture(filename)
+    imgs = []
+    success = True
+    while success:
+        success, image = vidcap.read()
+        if success:
+            imgs.append(Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB)))
     return imgs
 
 
@@ -43,7 +57,7 @@ def export_imgs(imgs, slides, block_w, block_h, blocks_x, blocks_y, outdir):
     with open(f'{outdir}/format.meta', 'wb') as f:
         assert f.write(format) == len(format)
         for slide in slides:
-            assert f.write(struct.pack('III', *slide)) == 12
+            assert f.write(struct.pack('IIII', *slide)) == 16
 
     print("Exporting...")
     for img_num, img in tqdm(enumerate(imgs), total=len(imgs)):
@@ -60,42 +74,53 @@ def export_imgs(imgs, slides, block_w, block_h, blocks_x, blocks_y, outdir):
 
 
 if __name__ == '__main__':
-    # _, filename = sys.argv
     # img = Image.open(filename)
     # print(img)
+
+
+    
+    _, infile, outfile = sys.argv
+    images = pdf.convert_from_path(infile)
+    slides = [Slide(1, False, TransitionType.INSTANT, 1) for _ in images]
+    slides[0] = Slide(1, False, TransitionType.LOCAL_H_WIPE, 25)
+    slides[9] = Slide(1, False, TransitionType.FADE, 25)
+    
+
+    # arrive_imgs = video_to_imgs('materials/snek_arrive.mp4')
+    # images.extend(arrive_imgs)
+    # slides.append(Slide(len(arrive_imgs), False, TransitionType.INSTANT, 1))
+   
+    block_w = 32
+    block_h = 32
+    blocks_x = 40
+    blocks_y = 23
+    export_imgs(images, slides, block_w, block_h, blocks_x, blocks_y, outfile)
 
     # block_w = 32
     # block_h = 32
     # blocks_x = 40
     # blocks_y = 23
-
-
     # imgs = create_test_imgs(20, block_w * blocks_x, block_h * blocks_y)
     # slides = [
-    #     Slide(5, TransitionType.INSTANT, 1),
-    #     Slide(5, TransitionType.INSTANT, 1),
-    #     Slide(5, TransitionType.INSTANT, 1),
-    #     Slide(1, TransitionType.INSTANT, 1),
-    #     Slide(1, TransitionType.INSTANT, 1),
-    #     Slide(1, TransitionType.INSTANT, 1),
-    #     Slide(1, TransitionType.INSTANT, 1),
-    #     Slide(1, TransitionType.INSTANT, 1),
+    #     Slide(5, True, TransitionType.INSTANT, 1),
+    #     Slide(5, False, TransitionType.INSTANT, 1),
+    #     Slide(5, True, TransitionType.INSTANT, 1),
+    #     Slide(1, False, TransitionType.INSTANT, 1),
+    #     Slide(1, False, TransitionType.INSTANT, 1),
+    #     Slide(1, False, TransitionType.LOCALHWIPE, 40),
+    #     Slide(1, False, TransitionType.INSTANT, 1),
+    #     Slide(1, False, TransitionType.INSTANT, 1),
     # ]
-
-
     # export_imgs(imgs, slides, block_w, block_h, blocks_x, blocks_y, "test_slides")
 
-    block_w = 32
-    block_h = 32
-    blocks_x = 2
-    blocks_y = 2
 
-
-    imgs = create_test_imgs(3, block_w * blocks_x, block_h * blocks_y)
-    slides = [
-        Slide(1, TransitionType.INSTANT, 1),
-        Slide(2, TransitionType.INSTANT, 1),
-    ]
-
-
-    export_imgs(imgs, slides, block_w, block_h, blocks_x, blocks_y, "tiny_slides")
+    # block_w = 32
+    # block_h = 32
+    # blocks_x = 2
+    # blocks_y = 2
+    # imgs = create_test_imgs(3, block_w * blocks_x, block_h * blocks_y)
+    # slides = [
+    #     Slide(1, False, TransitionType.INSTANT, 1),
+    #     Slide(2, True, TransitionType.INSTANT, 1),
+    # ]
+    # export_imgs(imgs, slides, block_w, block_h, blocks_x, blocks_y, "tiny_slides")

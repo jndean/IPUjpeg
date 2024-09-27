@@ -84,9 +84,10 @@ failure:
 
 struct SlideDesc {
     unsigned numFrames;
-    unsigned transition;
+    Transition_t transition;
     unsigned transitionFrames;
     unsigned firstImg;
+    bool loops;
 };
 
 
@@ -102,9 +103,10 @@ struct Slides {
 
     std::vector<SlideDesc> slideDescs;
     unsigned currentSlide;
-    bool transitioning;
     unsigned targetSlide;
     unsigned currentFrame;
+    bool transitioning;
+    unsigned transitionFrame;
 
     IPURequest_t ipuRequest;
     std::chrono::time_point<std::chrono::steady_clock> lastTick;
@@ -129,12 +131,12 @@ struct Slides {
         for (unsigned firstImg = 0; firstImg < numImgs;) {
             SlideDesc desc;
             desc.numFrames = *(data++);
-            desc.transition = *(data++);
+            desc.loops = *(data++);
+            desc.transition = (Transition_t) *(data++);
             desc.transitionFrames = *(data++);
             desc.firstImg = firstImg;
             firstImg += desc.numFrames;
             slideDescs.push_back(desc);
-            printf("Slide(%d, %d, %d)\n", desc.numFrames, desc.transition, desc.transitionFrames);
         }
 
 
@@ -155,7 +157,7 @@ struct Slides {
         }
         int maxBufSize = *std::max_element(filebufSizes.begin(), filebufSizes.end());
         fileBufSize = (maxBufSize + 3u) & (~3u); // 4-byte pad
-        printf("\nDone, filebuf size = %0.2lfMB\n", (fileBufSize * blocks_y * blocks_x) / 1e6);
+        printf("\nDone, filebuf size on tile = %0.2lfKB\n", (fileBufSize) / 1e3);
 
         files = std::vector<unsigned char>(numBlocks * fileBufSize);
         starts = std::vector<unsigned>(numBlocks * numImgs);
@@ -203,13 +205,14 @@ struct Slides {
         targetSlide = std::min(targetSlide + 1, (unsigned) slideDescs.size() - 1);
         if (transitioning) return;
         
+        currentFrame = 0;
         SlideDesc slide = slideDescs[currentSlide];
-        // if (slide.transition == INSTANT) {
+        if (slide.transition == INSTANT) {
             currentSlide = targetSlide;
-            currentFrame = 0;
-            return;
-        // }
-        // TODO: other transitions
+        } else {
+            transitioning = true;
+            transitionFrame = 0;
+        }
     }
     void prevSlide() {
         if (targetSlide) targetSlide -= 1;
@@ -231,12 +234,33 @@ struct Slides {
         frameRemainder = framesTodo - wholeFramesTodo;
 
         SlideDesc slide = slideDescs[currentSlide];
-        if (!transitioning) {
-            currentFrame = (currentFrame + wholeFramesTodo) % slide.numFrames;
-            ipuRequest.currentImage = slide.firstImg + currentFrame;
-            ipuRequest.transitionFrame = -1; // No transition
-            return;
+
+        if (transitioning) {
+            transitionFrame += wholeFramesTodo;
+            if (transitionFrame >= slide.transitionFrames) {
+                transitioning = false;
+                wholeFramesTodo = std::max(0u, transitionFrame - slide.transitionFrames - 1);
+                currentSlide = targetSlide;
+                currentFrame = 0;
+                slide = slideDescs[currentSlide];
+            }
         }
+
+        if (!transitioning) {
+            if (slide.loops) currentFrame = (currentFrame + wholeFramesTodo) % slide.numFrames;
+            else currentFrame = std::min(currentFrame + wholeFramesTodo, slide.numFrames - 1u);
+            ipuRequest.currentImage = slide.firstImg + currentFrame;
+            ipuRequest.transitionImage = -1; // Marks no transition
+        } else {
+            ipuRequest.currentImage = slide.firstImg + currentFrame;
+            ipuRequest.transitionImage = slideDescs[targetSlide].firstImg;
+            ipuRequest.transition = slide.transition;
+            ipuRequest.transitionFrame = transitionFrame;
+            ipuRequest.transitionLength = slide.transitionFrames;
+        }
+
+
+
     }
 };
 
@@ -251,26 +275,26 @@ int main(int argc, char** argv) {
     // Load presentation from disk
     Slides slides(argv[1]);
 
-
     const unsigned int bytesPerPixel = 3;
     const unsigned int pixelsSize = slides.width * slides.height * bytesPerPixel;
     const unsigned int numTiles = slides.numBlocks;
-    const unsigned int scratchSize = 200000;
+    const unsigned int scratchSize = 8192;
 
-    const unsigned int windowWidth = 160; // or slides.width;
-    const unsigned int windowHeight = 90; // or slides.height;
+    const unsigned int windowWidth = 480; // or slides.width;
+    const unsigned int windowHeight = 270; // or slides.height;
 
     // Setup IPU resources
     auto device = getIPU(true);
     poplar::Graph graph(device.getTarget());
 
     std::vector<unsigned char> pixels_h(pixelsSize, 0);
-    poplar::Tensor pixels_d = graph.addVariable(poplar::UNSIGNED_CHAR, {slides.height, slides.width, bytesPerPixel}, "pixels");
+    poplar::Tensor pixels_d = graph.addVariable(poplar::UNSIGNED_CHAR, {2, slides.height, slides.width, bytesPerPixel}, "pixels");
     poplar::Tensor files_d = graph.addVariable(poplar::UNSIGNED_CHAR, {numTiles, slides.fileBufSize}, "files");
     poplar::Tensor starts_d = graph.addVariable(poplar::UNSIGNED_INT, {numTiles, slides.numImgs}, "starts");
     poplar::Tensor lengths_d = graph.addVariable(poplar::UNSIGNED_INT, {numTiles, slides.numImgs}, "lengths");
     poplar::Tensor scratch_d = graph.addVariable(poplar::UNSIGNED_CHAR, {numTiles, scratchSize}, "scratch");
     poplar::Tensor request_d = graph.addVariable(poplar::UNSIGNED_CHAR, {sizeof(IPURequest_t)}, "request");
+    poplar::Tensor blockWidth_d = graph.addVariable(poplar::UNSIGNED_INT, {}, "blockWidth");
     poplar::DataStream pixelsStream = graph.addDeviceToHostFIFO("pixels-stream", poplar::UNSIGNED_CHAR, pixelsSize);
     poplar::DataStream requestStream = graph.addHostToDeviceFIFO("request-stream", poplar::UNSIGNED_CHAR, sizeof(IPURequest_t));
     poplar::DataStream filesStream = graph.addHostToDeviceFIFO("files-stream", poplar::UNSIGNED_CHAR, slides.files.size());
@@ -283,9 +307,11 @@ int main(int argc, char** argv) {
     for (unsigned y = 0, tile = 0; y < slides.blocks_y; ++y) {
         for (unsigned x = 0; x < slides.blocks_x; ++x, ++tile) {
             auto block = pixels_d.slice(
-                {(y    ) * slides.block_h, (x    ) * slides.block_w},
-                {(y + 1) * slides.block_h, (x + 1) * slides.block_w}
-            ).flatten();
+                {0, (y    ) * slides.block_h, (x    ) * slides.block_w},
+                {2, (y + 1) * slides.block_h, (x + 1) * slides.block_w}
+            );
+            auto pixels = block[0].flatten();
+            auto transitionPixels = block[1].flatten();
             graph.setTileMapping(block, tile);
             graph.setTileMapping(files_d[tile], tile);
             graph.setTileMapping(starts_d[tile], tile);
@@ -293,14 +319,19 @@ int main(int argc, char** argv) {
             graph.setTileMapping(scratch_d[tile], tile);
 
             poplar::VertexRef vtx = graph.addVertex(mainCS, "Decoder", {
-                {"files", files_d[tile]}, {"pixels", block}, {"scratch", scratch_d[tile]},
-                {"requestBuf", request_d}, {"starts", starts_d[tile]}, {"lengths", lengths_d[tile]}
+                {"files", files_d[tile]}, {"pixels", pixels}, 
+                {"scratch", scratch_d[tile]}, {"requestBuf", request_d}, 
+                {"starts", starts_d[tile]}, {"lengths", lengths_d[tile]},
+                {"transitionPixels", transitionPixels}, {"width", blockWidth_d}
             });
             graph.setTileMapping(vtx, tile);
             graph.setPerfEstimate(vtx, 10000000);
         }    
     }
     graph.setTileMapping(request_d, 0);
+    graph.setTileMapping(blockWidth_d, 0);
+    graph.setInitialValue<unsigned>(blockWidth_d, {slides.block_w});
+
 
     poplar::program::Sequence loadProg({
         poplar::program::Copy(filesStream, files_d),
@@ -310,7 +341,7 @@ int main(int argc, char** argv) {
     poplar::program::Sequence renderProg({
         poplar::program::Copy(requestStream, request_d),
         poplar::program::Execute(mainCS),
-        poplar::program::Copy(pixels_d, pixelsStream),
+        poplar::program::Copy(pixels_d[0], pixelsStream),
     });
 
     printf("Creating IPU engine\n");
