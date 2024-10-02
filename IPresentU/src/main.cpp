@@ -198,6 +198,7 @@ struct Slides {
         currentFrame = 0;
         ipuRequest.currentImage = 0;
         ipuRequest.transitionImage = -1;
+        ipuRequest.jazz = 0;
         lastTick = std::chrono::steady_clock::now();
     }
 
@@ -227,7 +228,7 @@ struct Slides {
         auto secondsPassed = std::chrono::duration< float >(now - lastTick).count();
         lastTick = now;
 
-        const int FPS = 20;
+        const int FPS = 25;
         static double frameRemainder = 0;
         double framesTodo = secondsPassed * FPS + frameRemainder;
         int wholeFramesTodo = (int)framesTodo;
@@ -259,9 +260,16 @@ struct Slides {
             ipuRequest.transitionLength = slide.transitionFrames;
         }
 
-
-
     }
+    
+    void jazz() {
+        ipuRequest.jazz = 1;
+    }
+
+    void nojazz() {
+        ipuRequest.jazz = 0;
+    }
+
 };
 
 
@@ -280,26 +288,31 @@ int main(int argc, char** argv) {
     const unsigned int numTiles = slides.numBlocks;
     const unsigned int scratchSize = 8192;
 
-    const unsigned int windowWidth = 480; // or slides.width;
-    const unsigned int windowHeight = 270; // or slides.height;
+    const unsigned int windowWidth = slides.width;
+    const unsigned int windowHeight = slides.height;
+    // const unsigned int windowWidth = 320;
+    // const unsigned int windowHeight = 180;
 
     // Setup IPU resources
     auto device = getIPU(true);
     poplar::Graph graph(device.getTarget());
 
     std::vector<unsigned char> pixels_h(pixelsSize, 0);
+    std::vector<unsigned> ids_h(numTiles, 0);
     poplar::Tensor pixels_d = graph.addVariable(poplar::UNSIGNED_CHAR, {2, slides.height, slides.width, bytesPerPixel}, "pixels");
     poplar::Tensor files_d = graph.addVariable(poplar::UNSIGNED_CHAR, {numTiles, slides.fileBufSize}, "files");
     poplar::Tensor starts_d = graph.addVariable(poplar::UNSIGNED_INT, {numTiles, slides.numImgs}, "starts");
     poplar::Tensor lengths_d = graph.addVariable(poplar::UNSIGNED_INT, {numTiles, slides.numImgs}, "lengths");
     poplar::Tensor scratch_d = graph.addVariable(poplar::UNSIGNED_CHAR, {numTiles, scratchSize}, "scratch");
     poplar::Tensor request_d = graph.addVariable(poplar::UNSIGNED_CHAR, {sizeof(IPURequest_t)}, "request");
+    poplar::Tensor ids_d = graph.addVariable(poplar::UNSIGNED_INT, {numTiles}, "ids");
     poplar::Tensor blockWidth_d = graph.addVariable(poplar::UNSIGNED_INT, {}, "blockWidth");
     poplar::DataStream pixelsStream = graph.addDeviceToHostFIFO("pixels-stream", poplar::UNSIGNED_CHAR, pixelsSize);
     poplar::DataStream requestStream = graph.addHostToDeviceFIFO("request-stream", poplar::UNSIGNED_CHAR, sizeof(IPURequest_t));
     poplar::DataStream filesStream = graph.addHostToDeviceFIFO("files-stream", poplar::UNSIGNED_CHAR, slides.files.size());
     poplar::DataStream startsStream = graph.addHostToDeviceFIFO("starts-stream", poplar::UNSIGNED_INT, slides.starts.size());
     poplar::DataStream lengthsStream = graph.addHostToDeviceFIFO("lengths-stream", poplar::UNSIGNED_INT, slides.lengths.size());
+    poplar::DataStream idsStream = graph.addHostToDeviceFIFO("ids-stream", poplar::UNSIGNED_INT, ids_h.size());
 
     graph.addCodelets("codelets.gp");
     poplar::ComputeSet mainCS = graph.addComputeSet("mainCS");
@@ -317,12 +330,15 @@ int main(int argc, char** argv) {
             graph.setTileMapping(starts_d[tile], tile);
             graph.setTileMapping(lengths_d[tile], tile);
             graph.setTileMapping(scratch_d[tile], tile);
+            graph.setTileMapping(ids_d[tile], tile);
+            ids_h[tile] = tile;
 
             poplar::VertexRef vtx = graph.addVertex(mainCS, "Decoder", {
                 {"files", files_d[tile]}, {"pixels", pixels}, 
                 {"scratch", scratch_d[tile]}, {"requestBuf", request_d}, 
                 {"starts", starts_d[tile]}, {"lengths", lengths_d[tile]},
-                {"transitionPixels", transitionPixels}, {"width", blockWidth_d}
+                {"transitionPixels", transitionPixels}, {"width", blockWidth_d},
+                {"patchId", ids_d[tile]}
             });
             graph.setTileMapping(vtx, tile);
             graph.setPerfEstimate(vtx, 10000000);
@@ -334,6 +350,7 @@ int main(int argc, char** argv) {
 
 
     poplar::program::Sequence loadProg({
+        poplar::program::Copy(idsStream, ids_d),
         poplar::program::Copy(filesStream, files_d),
         poplar::program::Copy(startsStream, starts_d),
         poplar::program::Copy(lengthsStream, lengths_d),
@@ -351,6 +368,7 @@ int main(int argc, char** argv) {
     engine.connectStream("files-stream", slides.files.data());
     engine.connectStream("starts-stream", slides.starts.data());
     engine.connectStream("lengths-stream", slides.lengths.data());
+    engine.connectStream("ids-stream", ids_h.data());
     engine.load(device);
     printf("Uploading slides to IPU\n");
     engine.run(0);
@@ -358,7 +376,7 @@ int main(int argc, char** argv) {
 
 
     SDL_Init( SDL_INIT_EVERYTHING );
-    SDL_Window* window = SDL_CreateWindow( "SDL", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, windowWidth, windowHeight, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+    SDL_Window* window = SDL_CreateWindow( "DoBeWeird.pptx", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, windowWidth, windowHeight, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     SDL_Renderer* renderer = SDL_CreateRenderer( window, -1, SDL_RENDERER_ACCELERATED );
     SDL_SetHint( SDL_HINT_RENDER_SCALE_QUALITY, "1" );
     SDL_Texture* texture = SDL_CreateTexture( renderer, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, slides.width, slides.height);
@@ -378,6 +396,10 @@ int main(int argc, char** argv) {
             if( SDL_KEYDOWN == ev.type) {
                 if (SDL_SCANCODE_LEFT == ev.key.keysym.scancode) slides.prevSlide();
                 if (SDL_SCANCODE_RIGHT == ev.key.keysym.scancode) slides.nextSlide();
+                if (SDL_SCANCODE_J == ev.key.keysym.scancode) slides.jazz();
+            }
+            if(SDL_KEYUP == ev.type) {
+                if (SDL_SCANCODE_J == ev.key.keysym.scancode) slides.nojazz();
             }
         }
         

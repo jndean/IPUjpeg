@@ -21,6 +21,9 @@ typedef struct {
     Transition_t transition;
     int transitionFrame;
     int transitionLength;
+
+    int jazz;
+
 } IPURequest_t;
 
 

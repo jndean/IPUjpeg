@@ -2,7 +2,6 @@ from collections import namedtuple
 from enum import IntEnum
 import os
 import struct
-import sys
 
 import numpy as np
 import pdf2image as pdf
@@ -39,6 +38,7 @@ def create_test_imgs(n, width, height):
 
 
 def video_to_imgs(filename):
+    print("Loading video:", filename)
     vidcap = cv2.VideoCapture(filename)
     imgs = []
     success = True
@@ -49,7 +49,12 @@ def video_to_imgs(filename):
     return imgs
 
 
-def export_imgs(imgs, slides, block_w, block_h, blocks_x, blocks_y, outdir):
+def export_imgs(nested_imgs, slides, block_w, block_h, blocks_x, blocks_y, outdir):
+
+    # Flatten image list
+    imgs = []
+    all(not (imgs.extend if isinstance(x, list) else imgs.append)(x) for x in nested_imgs)
+
     w, h = block_w * blocks_x, block_h * blocks_y
     
     os.makedirs(outdir, exist_ok=True)
@@ -59,7 +64,7 @@ def export_imgs(imgs, slides, block_w, block_h, blocks_x, blocks_y, outdir):
         for slide in slides:
             assert f.write(struct.pack('IIII', *slide)) == 16
 
-    print("Exporting...")
+    print("Exporting jpegs...")
     for img_num, img in tqdm(enumerate(imgs), total=len(imgs)):
         img = img.resize((w, h))
         for x in range(blocks_x):
@@ -74,45 +79,46 @@ def export_imgs(imgs, slides, block_w, block_h, blocks_x, blocks_y, outdir):
 
 
 if __name__ == '__main__':
-    # img = Image.open(filename)
-    # print(img)
 
-
-    
-    _, infile, outfile = sys.argv
-    images = pdf.convert_from_path(infile)
+    images = pdf.convert_from_path('materials/DoBeWeird.pdf')
     slides = [Slide(1, False, TransitionType.INSTANT, 1) for _ in images]
-    slides[0] = Slide(1, False, TransitionType.LOCAL_H_WIPE, 25)
-    slides[9] = Slide(1, False, TransitionType.FADE, 25)
+    slides[0] = Slide(1, False, TransitionType.FADE, 25)
+    slides[1] = Slide(1, False, TransitionType.FADE, 25)
+
+    agenda_imgs = video_to_imgs('materials/agenda.mp4')
+    images[6] = agenda_imgs
+    slides[6] = Slide(len(agenda_imgs), True, TransitionType.INSTANT, 1)
+
+    slides[7] = Slide(1, False, TransitionType.LOCAL_H_WIPE, 25)
+    slides[8] = Slide(1, False, TransitionType.LOCAL_H_WIPE, 25)
+    slides[14] = Slide(1, False, TransitionType.FADE, 40)
+    slides[24] = Slide(1, False, TransitionType.FADE, 25)
     
-
-    # arrive_imgs = video_to_imgs('materials/snek_arrive.mp4')
-    # images.extend(arrive_imgs)
-    # slides.append(Slide(len(arrive_imgs), False, TransitionType.INSTANT, 1))
-   
-    block_w = 32
-    block_h = 32
-    blocks_x = 40
-    blocks_y = 23
-    export_imgs(images, slides, block_w, block_h, blocks_x, blocks_y, outfile)
-
-    # block_w = 32
-    # block_h = 32
-    # blocks_x = 40
-    # blocks_y = 23
-    # imgs = create_test_imgs(20, block_w * blocks_x, block_h * blocks_y)
-    # slides = [
-    #     Slide(5, True, TransitionType.INSTANT, 1),
-    #     Slide(5, False, TransitionType.INSTANT, 1),
-    #     Slide(5, True, TransitionType.INSTANT, 1),
-    #     Slide(1, False, TransitionType.INSTANT, 1),
-    #     Slide(1, False, TransitionType.INSTANT, 1),
-    #     Slide(1, False, TransitionType.LOCALHWIPE, 40),
-    #     Slide(1, False, TransitionType.INSTANT, 1),
-    #     Slide(1, False, TransitionType.INSTANT, 1),
-    # ]
-    # export_imgs(imgs, slides, block_w, block_h, blocks_x, blocks_y, "test_slides")
-
+    xcom_imgs = video_to_imgs('materials/xcom.mp4')
+    images[30] = xcom_imgs
+    slides[30] = Slide(len(xcom_imgs), False, TransitionType.INSTANT, 1)
+    
+    re_imgs = video_to_imgs('materials/reverseengineer.mp4')
+    images[42] = re_imgs
+    slides[42] = Slide(len(re_imgs), True, TransitionType.INSTANT, 1)
+    
+    doom_imgs = video_to_imgs('materials/doomtransition.mp4')
+    images[51] = doom_imgs
+    slides[51] = Slide(len(doom_imgs), False, TransitionType.INSTANT, 1)
+    doom_imgs = video_to_imgs('materials/doomdance.mp4')
+    images[52] = doom_imgs
+    slides[52] = Slide(len(doom_imgs), True, TransitionType.INSTANT, 1)
+    
+    export_imgs(
+        images, slides,
+        block_w = 32,
+        block_h = 32,
+        blocks_x = 40,
+        blocks_y = 23,
+        # blocks_x = 40,
+        # blocks_y = 23,
+        outdir = 'do_be_weird',
+    )
 
     # block_w = 32
     # block_h = 32

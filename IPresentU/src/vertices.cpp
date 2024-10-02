@@ -1,8 +1,12 @@
 #include <print.h>
+#include <cmath>
+#include <poplar/TileConstants.hpp>
 #include <poplar/Vertex.hpp>
 
 #include"format.h"
 #include "ipuInterface.h"
+
+
 
 
 void fade(unsigned char* start, unsigned char* end, unsigned N, float progress) {
@@ -30,6 +34,33 @@ void dissolve(unsigned char* start, unsigned char* end, unsigned N, float progre
 }
 
 
+void jazz(unsigned char* pixels, unsigned N, float hue) {
+    
+    int i = hue * 6;
+    float f = hue * 6 - i;
+    int p = 0;
+    int q = 255 * (1 - f);
+    int t = 255 - q;
+
+    int r, g, b;
+    switch (i % 6) {
+        case 0: r = 256, g = t, b = 0; break;
+        case 1: r = q, g = 256, b = 0; break;
+        case 2: r = 0, g = 256, b = t; break;
+        case 3: r = 0, g = q, b = 256; break;
+        case 4: r = t, g = 0, b = 256; break;
+        case 5: r = 256, g = 0, b = q; break;
+    }
+
+    for (int i = 0; i < N; i += 3) {
+        pixels[i + 0] = (pixels[i + 0] + r) % 256;
+        pixels[i + 1] = (pixels[i + 1] + g) % 256;
+        pixels[i + 2] = (pixels[i + 2] + b) % 256;
+        // pixels[i + 0] = 0;
+    }
+}
+
+
 class Decoder : public poplar::Vertex {
    public:
     poplar::Input<poplar::Vector<unsigned char>> files;
@@ -37,11 +68,12 @@ class Decoder : public poplar::Vertex {
     poplar::Input<poplar::Vector<unsigned>> lengths;
     poplar::Input<poplar::Vector<unsigned char>> requestBuf;
     poplar::Input<unsigned> width;
+    poplar::Input<unsigned> patchId;
     poplar::Output<poplar::Vector<unsigned char>> pixels;
     poplar::Output<poplar::Vector<unsigned char>> scratch;
     poplar::Output<poplar::Vector<unsigned char>> transitionPixels;
     
-
+    
     void compute() {
 
         IPURequest_t* request = (IPURequest_t*) &requestBuf[0];
@@ -74,6 +106,14 @@ class Decoder : public poplar::Vertex {
                 default:
                     printf("Unhandled transition\n");
             }
+        }
+
+        static int jazz_count = -1;
+        if (request->jazz) {
+            if (jazz_count == -1) jazz_count = (*patchId * 23);
+            int period = 151;
+            jazz_count = (jazz_count + 1) % period;
+            jazz(&pixels[0], pixels.size(), jazz_count / (float) period);
         }
 
         if (!success) printf("JPG decode error");
